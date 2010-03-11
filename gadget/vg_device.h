@@ -38,8 +38,10 @@ struct vg_dev {
 	struct usb_ep		*bulk_in;
         struct usb_ep		*bulk_status_in;
 
-        /* Buffer queue */
-        struct vg_buffer_queue  bufq;
+        /* Buffer queues */
+        struct vg_buffer_queue  out_bufq;
+        struct vg_buffer_queue  in_bufq;
+        struct vg_buffer_queue  in_status_bufq;
 
         /* Thread control */
         struct vg_thread_ctl    thread_ctl;

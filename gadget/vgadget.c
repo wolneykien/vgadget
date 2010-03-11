@@ -490,21 +490,28 @@ static int vg_allocate_buffers(struct vg_buffer_queue *bufq,
   return rc;
 }
 
+/* Frees a buffer queue request objects */
+static void vg_free_requests(struct vg_buffer_queue *bufq,
+			     struct usb_ep *ep)
+{
+  int i;
+
+  for (i = 0; i < VG_NUM_BUFFERS; ++i) {
+    if (bufq->buffhds[i].req) {
+      usb_ep_free_request(ep, bufq->buffhds[i].req);
+      bufq->buffhds[i].req = NULL;
+    }
+  }
+}
+
 /* Frees a buffer queue */
 static void vg_free_buffers(struct vg_buffer_queue *bufq,
 			    struct usb_ep *ep)
 {
   int i;
 
+  vg_free_requests(bufq, ep);
   for (i = 0; i < VG_NUM_BUFFERS; ++i) {
-    if (bufq->buffhds[i].inreq) {
-      usb_ep_free_request(ep, bufq->buffhds[i].inreq);
-      bufq->buffhds[i].inreq = NULL;
-    }
-    if (bufq->buffhds[i].outreq) {
-      usb_ep_free_request(ep, bufq->buffhds[i].outreq);
-      bufq->buffhds[i].outreq = NULL;
-    }
     usb_ep_free_buffer(ep,
 		       bufq->buffhds[i].buf,
 		       &bufq->buffhds[i].dma,
@@ -724,9 +731,15 @@ static int __init vg_bind(struct usb_gadget *gadget)
 	  ERROR(vg, "Error while allocating buffer for endpoint 0\n");
 	}
 
+	/* Allocate the data buffers */
 	if (rc == 0) {
-	  /* Allocate the data buffers */
-	  rc = vg_allocate_buffers(&vg->bufq, vg->bulk_out);
+	  rc = vg_allocate_buffers(&vg->out_bufq, vg->bulk_out);
+	}
+	if (rc == 0) {
+	  rc = vg_allocate_buffers(&vg->in_bufq, vg->bulk_in);
+	}
+	if (rc == 0) {
+	  rc = vg_allocate_buffers(&vg->in_status_bufq, vg->bulk_status_in);
 	}
 	if (rc != 0) {
 	  ERROR(vg, "Error while allocating data buffers\n");
@@ -777,20 +790,17 @@ static void vg_unbind(struct usb_gadget *gadget)
 	}
 
 	/* Free the data buffers */
-	for (i = 0; i < NUM_BUFFERS; ++i) {
-		struct vg_buffhd	*bh = &vg->buffhds[i];
-
-		if (bh->buf)
-			usb_ep_free_buffer(vg->bulk_in, bh->buf, bh->dma,
-					mod_data.buflen);
-	}
+	vg_free_buffers(&vg->out_bufq, vg->bulk_out);
+	vg_free_buffers(&vg->in_bufq, vg->bulk_in);
+	vg_free_buffers(&vg->in_status_bufq, vg->bulk_status_in);
 
 	/* Free the request and buffer for endpoint 0 */
-	if (req) {
-		if (req->buf)
-			usb_ep_free_buffer(vg->ep0, req->buf,
-					req->dma, EP0_BUFSIZE);
-		usb_ep_free_request(vg->ep0, req);
+	if (vg->ep0_req) {
+	  if (vg->ep0_req->buf) {
+	    usb_ep_free_buffer(vg->ep0, vg->ep0_req->buf,
+			       vg->ep0_req->dma, EP0_BUFSIZE);
+	  }
+	  usb_ep_free_request(vg->ep0, vg->eq0_req);
 	}
 
 	set_gadget_data(gadget, NULL);
@@ -1257,22 +1267,9 @@ static int do_set_interface(struct vg_dev *vg, int altsetting)
 
 reset:
 	/* Deallocate the requests */
-	for (i = 0; i < NUM_BUFFERS; ++i) {
-		struct vg_buffhd *bh = &vg->buffhds[i];
-
-		if (bh->inreq) {
-			usb_ep_free_request(vg->bulk_in, bh->inreq);
-			bh->inreq = NULL;
-		}
-		if (bh->outreq) {
-			usb_ep_free_request(vg->bulk_out, bh->outreq);
-			bh->outreq = NULL;
-		}
-	}
-	if (vg->intreq) {
-		usb_ep_free_request(vg->intr_in, vg->intreq);
-		vg->intreq = NULL;
-	}
+	vg_free_requests(vg->out_bufq, vg->bulk_out);
+	vg_free_requests(vg->in_bufq, vg->bulk_in);
+	vg_free_requests(vg->in_status_bufq, vg->bulk_status_in);
 
 	/* Disable the endpoints */
 	if (vg->bulk_in_enabled) {

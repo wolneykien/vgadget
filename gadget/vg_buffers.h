@@ -24,10 +24,8 @@ struct vg_buffhd {
 	volatile enum vg_buffer_state	state;
 	struct vg_buffhd		*next;
 	unsigned int			bulk_out_intended_length;
-	struct usb_request		*inreq;
-	volatile int			inreq_busy;
-	struct usb_request		*outreq;
-	volatile int			outreq_busy;
+	struct usb_request		*req;
+	volatile int			req_busy;
 };
 
 /* A buffer queue structure */
@@ -38,5 +36,9 @@ struct vg_buffer_queue {
 }
 
 /* Allocation and free prototypes */
-static int vg_allocate_buffers(struct vg_buffer_queue *bufq);
-static int vg_free_buffers(struct vg_buffer_queue *bufq);
+static int vg_allocate_buffers(struct vg_buffer_queue *bufq,
+			       struct usb_ep *ep);
+static int vg_free_buffers(struct vg_buffer_queue *bufq,
+			   struct usb_ep *ep);
+static void vg_free_requests(struct vg_buffer_queue *bufq,
+			     struct usb_ep *ep)
