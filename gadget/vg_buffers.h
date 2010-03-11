@@ -19,8 +19,6 @@ enum vg_buffer_state {
 
 /* A buffer head structure */
 struct vg_buffhd {
-	void				*buf;
-	dma_addr_t			dma;
 	volatile enum vg_buffer_state	state;
 	struct vg_buffhd		*next;
 	unsigned int			bulk_out_intended_length;
