@@ -551,6 +551,36 @@ static void vg_free_buffers(struct vg_buffer_queue *bufq,
   }
 }
 
+/* Cancels all the pending transfers */
+static void vg_dequeue_all(struct vg_buffer_queue *bufq,
+			   struct usb_ep *ep)
+{
+  for (i = 0; i < VG_NUM_BUFFERS; ++i) {
+    if (vg->buffhds[i].req_busy) {
+      usb_ep_dequeue(ep, bufq->buffhds[i].req);
+    }
+  }
+}
+
+/* Indicates are all transfers are idle */
+static void vg_no_transfers(struct vg_buffer_queue *bufq)
+{
+  for (i = 0; i < VG_NUM_BUFFERS; ++i) {
+    if (bufq->buffhds[i].req_busy) {
+      return 0;
+    }
+  }
+
+  return 1;
+}
+
+/* Resets the queue pointers */
+static void vg_reset_queue(struct vg_buffer_queue *bufq)
+{
+  bufq->next_buffhd_to_fill =
+    bufq->next_buffhd_to_drain = bufq->buffhds[0];
+}
+
 /* Validates the gadget device parameters */
 static int __init check_parameters(struct vg_dev *vg)
 {
@@ -1362,93 +1392,47 @@ static int do_set_config(struct vg_dev *vg, u8 new_config)
 	return rc;
 }
 
+/* Handles an exception state of the gadget device */
 static void handle_exception(struct vg_dev *vg)
 {
-	siginfo_t		info;
-	int			sig;
-	int			i;
-	int			num_active;
-	struct vg_buffhd	*bh;
 	enum vg_state		old_state;
 	u8			new_config;
-	struct lun		*curlun;
 	unsigned int		exception_req_tag;
 	int			rc;
 
-	/* Clear the existing signals.  Anything but SIGUSR1 is converted
-	 * into a high-priority EXIT exception. */
-	for (;;) {
-		sig = dequeue_signal_lock(current, &vg->thread_signal_mask,
-				&info);
-		if (!sig)
-			break;
-		if (sig != SIGUSR1) {
-			if (vg->state < VG_STATE_EXIT)
-				DBG(vg, "Main thread exiting on signal\n");
-			raise_exception(vg, VG_STATE_EXIT);
-		}
-	}
-
 	/* Cancel all the pending transfers */
-	if (vg->intreq_busy)
-		usb_ep_dequeue(vg->intr_in, vg->intreq);
-	for (i = 0; i < NUM_BUFFERS; ++i) {
-		bh = &vg->buffhds[i];
-		if (bh->inreq_busy)
-			usb_ep_dequeue(vg->bulk_in, bh->inreq);
-		if (bh->outreq_busy)
-			usb_ep_dequeue(vg->bulk_out, bh->outreq);
-	}
+	vg_dequeue_all(vg->out_bufq, vg->bulk_out);
+	vg_dequeue_all(vg->in_bufq, vg->bulk_in);
+	vg_dequeue_all(vg->status_in_bufq, vg->status_in_out);
 
 	/* Wait until everything is idle */
-	for (;;) {
-		num_active = vg->intreq_busy;
-		for (i = 0; i < NUM_BUFFERS; ++i) {
-			bh = &vg->buffhds[i];
-			num_active += bh->inreq_busy + bh->outreq_busy;
-		}
-		if (num_active == 0)
-			break;
-		if (sleep_thread(vg))
-			return;
+	while (!vg_no_transfers(vg->out_bufq)
+	       || !vg_no_transfers(vg->in_bufq)
+	       || !vg_no_transfers(vg->status_in_bufq)) {
+	  if ((rc = sleep_thread(vg)) != 0) {
+	    return rc;
+	  }
 	}
 
 	/* Clear out the controller's fifos */
-	if (vg->bulk_in_enabled)
-		usb_ep_fifo_flush(vg->bulk_in);
-	if (vg->bulk_out_enabled)
-		usb_ep_fifo_flush(vg->bulk_out);
-	if (vg->intr_in_enabled)
-		usb_ep_fifo_flush(vg->intr_in);
+	usb_ep_fifo_flush(vg->bulk_out);
+	usb_ep_fifo_flush(vg->bulk_in);
+	usb_ep_fifo_flush(vg->bulk_status_in);
 
-	/* Reset the I/O buffer states and pointers, the SCSI
-	 * state, and the exception.  Then invoke the handler. */
-	spin_lock_irq(&vg->lock);
-
-	for (i = 0; i < NUM_BUFFERS; ++i) {
-		bh = &vg->buffhds[i];
-		bh->state = BUF_STATE_EMPTY;
-	}
-	vg->next_buffhd_to_fill = vg->next_buffhd_to_drain =
-			&vg->buffhds[0];
+	/* Reset the queue pointers */
+	vg_reset_queue(vg->out_bufq);
+	vg_reset_queue(vg->in_bufq);
+	vg_reset_queue(vg->status_in_bufq);
 
 	exception_req_tag = vg->exception_req_tag;
 	new_config = vg->new_config;
 	old_state = vg->state;
 
-	if (old_state == VG_STATE_ABORT_BULK_OUT)
-		vg->state = VG_STATE_STATUS_PHASE;
-	else {
-		for (i = 0; i < vg->nluns; ++i) {
-			curlun = &vg->luns[i];
-			curlun->prevent_medium_removal = 0;
-			curlun->sense_data = curlun->unit_attention_data =
-					SS_NO_SENSE;
-			curlun->sense_data_info = 0;
-		}
-		vg->state = VG_STATE_IDLE;
+	if (old_state == VG_STATE_ABORT_BULK_OUT) {
+	  vg_set_state(VG_STATE_STATUS_PHASE);
+	} else {
+	  vg_set_state(VG_STATE_IDLE);
 	}
-	spin_unlock_irq(&vg->lock);
 
 	/* Carry out any extra actions required for the exception */
 	switch (old_state) {
@@ -1456,70 +1440,57 @@ static void handle_exception(struct vg_dev *vg)
 		break;
 
 	case VG_STATE_ABORT_BULK_OUT:
-		send_status(vg);
-		spin_lock_irq(&vg->lock);
-		if (vg->state == VG_STATE_STATUS_PHASE)
-			vg->state = VG_STATE_IDLE;
-		spin_unlock_irq(&vg->lock);
-		break;
+	  vg_set_state(VG_STATE_IDLE);
+	  break;
 
 	case VG_STATE_RESET:
 		/* In case we were forced against our will to halt a
 		 * bulk endpoint, clear the halt now.  (The SuperH UDC
 		 * requires this.) */
 		if (test_and_clear_bit(CLEAR_BULK_HALTS,
-				&vg->atomic_bitflags)) {
-			usb_ep_clear_halt(vg->bulk_in);
-			usb_ep_clear_halt(vg->bulk_out);
+				       &vg->atomic_bitflags)) {
+		  usb_ep_clear_halt(vg->bulk_out);
+		  usb_ep_clear_halt(vg->bulk_in);
+		  usb_ep_clear_halt(vg->bulk_status_in);
 		}
 
-		if (transport_is_bbb()) {
-			if (vg->ep0_req_tag == exception_req_tag)
-				ep0_queue(vg);	// Complete the status stage
-
-		} else if (transport_is_cbi())
-			send_status(vg);	// Status by interrupt pipe
-
-		/* Technically this should go here, but it would only be
-		 * a waste of time.  Ditto for the INTERFACE_CHANGE and
-		 * CONFIG_CHANGE cases. */
-		// for (i = 0; i < vg->nluns; ++i)
-		//	vg->luns[i].unit_attention_data = SS_RESET_OCCURRED;
+		if (vg->ep0_req_tag == exception_req_tag) {
+		  ep0_queue(vg);	// Complete the status stage
+		}
 		break;
 
 	case VG_STATE_INTERFACE_CHANGE:
 		rc = do_set_interface(vg, 0);
 		if (vg->ep0_req_tag != exception_req_tag)
-			break;
+		  break;
 		if (rc != 0)			// STALL on errors
-			vg_set_halt(vg, vg->ep0);
+		  vg_set_halt(vg, vg->ep0);
 		else				// Complete the status stage
-			ep0_queue(vg);
+		  ep0_queue(vg);
 		break;
 
 	case VG_STATE_CONFIG_CHANGE:
-		rc = do_set_config(vg, new_config);
-		if (vg->ep0_req_tag != exception_req_tag)
-			break;
-		if (rc != 0)			// STALL on errors
-			vg_set_halt(vg, vg->ep0);
-		else				// Complete the status stage
-			ep0_queue(vg);
-		break;
+	  rc = do_set_config(vg, new_config);
+	  if (vg->ep0_req_tag != exception_req_tag)
+	    break;
+	  if (rc != 0)			// STALL on errors
+	    vg_set_halt(vg, vg->ep0);
+	  else				// Complete the status stage
+	    ep0_queue(vg);
+	  break;
 
 	case VG_STATE_DISCONNECT:
-		fsync_all(vg);
-		do_set_config(vg, 0);		// Unconfigured state
-		break;
+	  do_set_config(vg, -1);		// Unconfigured state
+	  break;
 
 	case VG_STATE_EXIT:
 	case VG_STATE_TERMINATED:
-		do_set_config(vg, 0);			// Free resources
-		spin_lock_irq(&vg->lock);
-		vg->state = VG_STATE_TERMINATED;	// Stop the thread
-		spin_unlock_irq(&vg->lock);
-		break;
+	  do_set_config(vg, -1);	        // Free resources
+	  vg_set_state(VG_STATE_TERMINATED);	// Stop the thread
+	  break;
 	}
+
+	return rc;
 }
 
 /* The main thread function */
