@@ -463,27 +463,58 @@ static void vg_free(struct vg_dev *vg)
 	kfree(vg);
 }
 
+/* Allocates a buffer queue request objects */
+static void vg_allocate_requests(struct vg_buffer_queue *bufq,
+				 struct usb_ep *ep)
+{
+  int i, rc;
+
+  for (i = 0; i < VG_NUM_BUFFERS; ++i) {
+    if ((bufq->buffhds[i].req =
+	 usb_ep_alloc_request(ep, GFP_ATOMIC)) != NULL) {
+      rc = 0;
+    } else {
+      MERROR("Can't allocate request for %s\n", ep->name);
+      rc = -ENOMEM;
+    }
+
+    if (rc == 0) {
+      bufq->buffhds[i].req->context = bufq->buffhds[i];
+      bufq->buffhds[i].req->complete = bulk_complete;
+    }
+  }
+
+  return rc;
+}
+
 /* Allocates a buffer queue */
 static int vg_allocate_buffers(struct vg_buffer_queue *bufq,
 			       struct usb_ep *ep)
 {
   int i, rc;
 
-  for (i = 0; i < VG_NUM_BUFFERS; ++i) {
-    bufq->buffhds[i].buf =
-      usb_ep_alloc_buffer(ep,
-			  VG_BUF_SIZE,
-			  &bufq->buffhds[i].dma,
-			  GFP_KERNEL);
-    if (bufq->buffhds[i].buf) {
-      if ((i + 1) < VG_NUM_BUFFERS) {
-	bufq->buffhds[i].next = &bufq->buffhds[i + 1];
+  if ((rc = vg_allocate_requests(bufq, ep)) != 0) {
+    MERROR("Unable to allocate request objects\n");
+  }
+  
+  if (rc == 0) {
+    for (i = 0; i < VG_NUM_BUFFERS; ++i) {
+      bufq->buffhds[i].req->buf =
+	usb_ep_alloc_buffer(ep,
+			    VG_BUF_SIZE,
+			    &bufq->buffhds[i].req->dma,
+			    GFP_KERNEL);
+      if (bufq->buffhds[i].req->buf) {
+	if ((i + 1) < VG_NUM_BUFFERS) {
+	  bufq->buffhds[i].next = &bufq->buffhds[i + 1];
+	} else {
+	  bufq->buffhds[i].next = NULL;
+	}
+	rc = 0;
       } else {
-	bufq->buffhds[i].next = NULL;
+	rc = -ENOMEM;
+	MERROR("Unable to allocate buffer for %s\n", ep->name);
       }
-      rc = 0;
-    } else {
-      rc = -ENOMEM;
     }
   }
 
@@ -1244,23 +1275,10 @@ static int enable_endpoint(struct vg_dev *vg, struct usb_ep *ep,
 	return rc;
 }
 
-/* Allocates a request buffer for a given endpoint */
-static int alloc_request(struct vg_dev *vg, struct usb_ep *ep,
-			 struct usb_request **preq)
-{
-	*preq = usb_ep_alloc_request(ep, GFP_ATOMIC);
-	if (*preq)
-		return 0;
-	ERROR(vg, "can't allocate request for %s\n", ep->name);
-	return -ENOMEM;
-}
-
 /* Resets the interface setting and re-init endpoints */
 static int do_set_interface(struct vg_dev *vg, int altsetting)
 {
-	int	rc = 0;
-	int	i;
-	const struct usb_endpoint_descriptor	*d;
+	int rc = 0;
 
 	if (is_running(vg))
 	  DBG(vg, "reset interface\n");
@@ -1272,67 +1290,65 @@ reset:
 	vg_free_requests(vg->in_status_bufq, vg->bulk_status_in);
 
 	/* Disable the endpoints */
-	if (vg->bulk_in_enabled) {
-		usb_ep_disable(vg->bulk_in);
-		vg->bulk_in_enabled = 0;
-	}
-	if (vg->bulk_out_enabled) {
-		usb_ep_disable(vg->bulk_out);
-		vg->bulk_out_enabled = 0;
-	}
-	if (vg->intr_in_enabled) {
-		usb_ep_disable(vg->intr_in);
-		vg->intr_in_enabled = 0;
-	}
+	usb_ep_disable(vg->bulk_out);
+	usb_ep_disable(vg->bulk_in);
+	usb_ep_disable(vg->bulk_status_in);
+	vg_set_status(vg, VG_STATE_IDLE);
 
-	vg->running = 0;
-	if (altsetting < 0 || rc != 0)
-		return rc;
+	if (altsetting < 0) {
+	  return -EOPNOTSUPP;
+	}
 
 	DBG(vg, "set interface %d\n", altsetting);
 
 	/* Enable the endpoints */
-	d = ep_desc(vg->gadget, &fs_bulk_in_desc, &hs_bulk_in_desc);
-	if ((rc = enable_endpoint(vg, vg->bulk_in, d)) != 0)
-		goto reset;
-	vg->bulk_in_enabled = 1;
-
-	d = ep_desc(vg->gadget, &fs_bulk_out_desc, &hs_bulk_out_desc);
-	if ((rc = enable_endpoint(vg, vg->bulk_out, d)) != 0)
-		goto reset;
-	vg->bulk_out_enabled = 1;
-	vg->bulk_out_maxpacket = d->wMaxPacketSize;
-
-	if (transport_is_cbi()) {
-		d = ep_desc(vg->gadget, &fs_intr_in_desc, &hs_intr_in_desc);
-		if ((rc = enable_endpoint(vg, vg->intr_in, d)) != 0)
-			goto reset;
-		vg->intr_in_enabled = 1;
+	if (vg->gadget->speed == USB_SPEED_HIGH) {
+	  if ((rc = enable_endpoint(vg,
+				    vg->bulk_out,
+				    &hs_bulk_out_desc)) != 0) {
+	    ERROR(vg, "Error while enable bulk-out endpoint\n");
+	  }
+	  if ((rc = enable_endpoint(vg,
+				    vg->bulk_in,
+				    &hs_bulk_in_desc)) != 0) {
+	    ERROR(vg, "Error while enable bulk-in endpoint\n");
+	  }
+	  if ((rc = enable_endpoint(vg,
+				    vg->bulk_status_in,
+				    &hs_bulk_status_in_desc)) != 0) {
+	    ERROR(vg, "Error while enable bulk-status-in endpoint\n");
+	  }
+	} else {
+	  if ((rc = enable_endpoint(vg,
+				    vg->bulk_out,
+				    &fs_bulk_out_desc)) != 0) {
+	    ERROR(vg, "Error while enable bulk-out endpoint\n");
+	  }
+	  if ((rc = enable_endpoint(vg,
+				    vg->bulk_in,
+				    &fs_bulk_in_desc)) != 0) {
+	    ERROR(vg, "Error while enable bulk-in endpoint\n");
+	  }
+	  if ((rc = enable_endpoint(vg,
+				    vg->bulk_status_in,
+				    &fs_bulk_status_in_desc)) != 0) {
+	    ERROR(vg, "Error while enable bulk-status-in endpoint\n");
+	  }
 	}
 
 	/* Allocate the requests */
-	for (i = 0; i < NUM_BUFFERS; ++i) {
-		struct vg_buffhd	*bh = &vg->buffhds[i];
-
-		if ((rc = alloc_request(vg, vg->bulk_in, &bh->inreq)) != 0)
-			goto reset;
-		if ((rc = alloc_request(vg, vg->bulk_out, &bh->outreq)) != 0)
-			goto reset;
-		bh->inreq->buf = bh->outreq->buf = bh->buf;
-		bh->inreq->dma = bh->outreq->dma = bh->dma;
-		bh->inreq->context = bh->outreq->context = bh;
-		bh->inreq->complete = bulk_in_complete;
-		bh->outreq->complete = bulk_out_complete;
+	if (rc == 0) {
+	  rc = vg_allocate_requests(vg->out_bufq, vg->bulk_out);
 	}
-	if (transport_is_cbi()) {
-		if ((rc = alloc_request(vg, vg->intr_in, &vg->intreq)) != 0)
-			goto reset;
-		vg->intreq->complete = intr_in_complete;
+	if (rc == 0) {
+	  rc = vg_allocate_requests(vg->in_bufq, vg->bulk_in);
+	}
+	if (rc == 0) {
+	  rc = vg_allocate_requests(vg->status_in_bufq, vg->bulk_status_in);
 	}
 
-	vg->running = 1;
-	for (i = 0; i < vg->nluns; ++i)
-		vg->luns[i].unit_attention_data = SS_RESET_OCCURRED;
+	vg_set_status(vg, VG_STATE_RUNNUNG);
+
 	return rc;
 }
 
