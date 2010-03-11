@@ -127,6 +127,9 @@ static struct {
 /* There is only one configuration. */
 #define	CONFIG_VALUE		1
 
+/* Endpoint 0 buffer size */
+#define EP0_BUFSIZE 1024
+
 /* The gadget USB device descriptor */
 static struct usb_device_descriptor
 device_desc = {
