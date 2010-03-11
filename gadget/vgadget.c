@@ -1261,7 +1261,6 @@ static int do_set_interface(struct vg_dev *vg, int altsetting)
 	if (is_running(vg))
 	  DBG(vg, "reset interface\n");
 
-reset:
 	/* Deallocate the requests */
 	vg_free_requests(vg->out_bufq, vg->bulk_out);
 	vg_free_requests(vg->in_bufq, vg->bulk_in);
