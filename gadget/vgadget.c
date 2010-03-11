@@ -497,6 +497,14 @@ static void vg_free_buffers(struct vg_buffer_queue *bufq,
   int i;
 
   for (i = 0; i < VG_NUM_BUFFERS; ++i) {
+    if (bufq->buffhds[i].inreq) {
+      usb_ep_free_request(ep, bufq->buffhds[i].inreq);
+      bufq->buffhds[i].inreq = NULL;
+    }
+    if (bufq->buffhds[i].outreq) {
+      usb_ep_free_request(ep, bufq->buffhds[i].outreq);
+      bufq->buffhds[i].outreq = NULL;
+    }
     usb_ep_free_buffer(ep,
 		       bufq->buffhds[i].buf,
 		       &bufq->buffhds[i].dma,
