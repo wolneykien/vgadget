@@ -1273,7 +1273,7 @@ static int do_set_interface(struct vg_dev *vg, int altsetting)
 	vg_set_status(vg, VG_STATE_IDLE);
 
 	if (altsetting < 0) {
-	  return -EOPNOTSUPP;
+	  return rc;
 	}
 
 	DBG(vg, "set interface %d\n", altsetting);
@@ -1329,7 +1329,6 @@ static int do_set_interface(struct vg_dev *vg, int altsetting)
 	return rc;
 }
 
-
 /* Change the operational configuration */
 static int do_set_config(struct vg_dev *vg, u8 new_config)
 {
@@ -1345,9 +1344,10 @@ static int do_set_config(struct vg_dev *vg, u8 new_config)
 	/* Enable the interface */
 	if (new_config != 0) {
 		vg->config = new_config;
-		if ((rc = do_set_interface(vg, 0)) != 0)
+		if ((rc = do_set_interface(vg, 0)) != 0) {
 			vg->config = 0;	// Reset on errors
-		else {
+			ERROR(vg, "Error set up the interface\n");
+		} else {
 			char *speed;
 
 			switch (vg->gadget->speed) {
