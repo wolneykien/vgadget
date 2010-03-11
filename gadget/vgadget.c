@@ -1112,7 +1112,7 @@ static void vg_disconnect(struct usb_gadget *gadget)
  */
 
 /* Handles a finished request of a bulk-in endpoint */
-static void bulk_in_complete(struct usb_ep *ep, struct usb_request *req)
+static void bulk_complete(struct usb_ep *ep, struct usb_request *req)
 {
 	struct vg_dev		*vg = (struct vg_dev *) ep->driver_data;
 	struct vg_buffhd	*bh = (struct vg_buffhd *) req->context;
@@ -1126,31 +1126,9 @@ static void bulk_in_complete(struct usb_ep *ep, struct usb_request *req)
 	/* Hold the lock while we update the request and buffer states */
 	spin_lock(&vg->lock);
 	bh->inreq_busy = 0;
-	bh->state = BUF_STATE_EMPTY;
+	bh->state = BUF_STATE_EMPTY; // TODO: STATE_FULL
 	spin_unlock(&vg->lock);
 	wakeup_thread(vg); // TODO: submit next buffer?
-}
-
-/* Handles a finished request of a bulk-out endpoint */
-static void bulk_out_complete(struct usb_ep *ep, struct usb_request *req)
-{
-	struct vg_dev		*vg = (struct vg_dev *) ep->driver_data;
-	struct vg_buffhd	*bh = (struct vg_buffhd *) req->context;
-
-	dump_msg(vg, "bulk-out", req->buf, req->actual);
-	if (req->status || req->actual != bh->bulk_out_intended_length)
-		DBG(vg, "%s --> %d, %u/%u\n", __FUNCTION__,
-				req->status, req->actual,
-				bh->bulk_out_intended_length);
-	if (req->status == -ECONNRESET)		// Request was cancelled
-		usb_ep_fifo_flush(ep);
-
-	/* Hold the lock while we update the request and buffer states */
-	spin_lock(&vg->lock);
-	bh->outreq_busy = 0;
-	bh->state = BUF_STATE_FULL;
-	spin_unlock(&vg->lock);
-	wakeup_thread(vg); // TODO: offer next buffer?
 }
 
 /* Makes bulk-out requests be divisible by the maxpacket size */
