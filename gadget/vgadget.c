@@ -1237,15 +1237,15 @@ static int alloc_request(struct vg_dev *vg, struct usb_ep *ep,
 	return -ENOMEM;
 }
 
-/* Resets the interface setting and re-init endpoint state */
+/* Resets the interface setting and re-init endpoints */
 static int do_set_interface(struct vg_dev *vg, int altsetting)
 {
 	int	rc = 0;
 	int	i;
 	const struct usb_endpoint_descriptor	*d;
 
-	if (vg->running)
-		DBG(vg, "reset interface\n");
+	if (is_running(vg))
+	  DBG(vg, "reset interface\n");
 
 reset:
 	/* Deallocate the requests */
