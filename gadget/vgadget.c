@@ -1655,7 +1655,7 @@ static int vg_main_thread(void *vg_)
 
 	/* The main loop */
 	while (vg->state != VG_STATE_TERMINATED) {
-	  vg_set_state(vg, VG_STATE_INDLE);
+	  vg_set_state(vg, VG_STATE_IDLE);
 	  DBG(vg, "Put the main thread in a sleep\n");
 	  sleep_thread(vg);
 	  if (exception_in_progress(vg)) {
