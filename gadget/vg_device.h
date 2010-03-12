@@ -11,7 +11,23 @@ struct vg_thread_ctl {
 	int			thread_pid;
 	struct task_struct	*thread_task;
 	sigset_t		thread_signal_mask;
-}
+};
+
+/* The set of gadget states */
+enum vg_state {
+	VG_STATE_TERMINATED = -7,
+	VG_STATE_EXIT,
+	VG_STATE_DISCONNECT,
+	VG_STATE_CONFIG_CHANGE,
+	VG_STATE_INTERFACE_CHANGE,
+	VG_STATE_RESET,
+        VG_STATE_ABORT_BULK_OUT,
+	VG_STATE_IDLE = 0,
+	VG_STATE_RUNNING,
+        VG_STATE_COMMAND_PHASE,
+	VG_STATE_DATA_PHASE,
+	VG_STATE_STATUS_PHASE,
+};
 
 /* A gadget device structure */
 struct vg_dev {
@@ -45,22 +61,6 @@ struct vg_dev {
 
         /* Thread control */
         struct vg_thread_ctl    thread_ctl;
-};
-
-/* The set of gadget states */
-enum vg_state {
-	VG_STATE_TERMINATED = -7,
-	VG_STATE_EXIT,
-	VG_STATE_DISCONNECT,
-	VG_STATE_CONFIG_CHANGE,
-	VG_STATE_INTERFACE_CHANGE,
-	VG_STATE_RESET,
-        VG_STATE_ABORT_BULK_OUT,
-	VG_STATE_IDLE = 0,
-	VG_STATE_RUNNING,
-        VG_STATE_COMMAND_PHASE,
-	VG_STATE_DATA_PHASE,
-	VG_STATE_STATUS_PHASE,
 };
 
 /* Constatns for state flags */

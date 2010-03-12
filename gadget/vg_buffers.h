@@ -31,10 +31,10 @@ struct vg_buffer_queue {
 	struct vg_buffhd	buffhds[VG_NUM_BUFFERS];
 	struct vg_buffhd	*next_buffhd_to_fill;
 	struct vg_buffhd	*next_buffhd_to_drain;
-}
+};
 
 /* Allocation and free prototypes */
 int vg_allocate_requests(struct vg_buffer_queue *bufq, struct usb_ep *ep);
 int vg_allocate_buffers(struct vg_buffer_queue *bufq, struct usb_ep *ep);
 int vg_free_buffers(struct vg_buffer_queue *bufq, struct usb_ep *ep);
-void vg_free_requests(struct vg_buffer_queue *bufq, struct usb_ep *ep)
+void vg_free_requests(struct vg_buffer_queue *bufq, struct usb_ep *ep);
