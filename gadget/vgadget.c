@@ -1625,7 +1625,7 @@ static void handle_exception(struct vg_dev *vg)
 	case VG_STATE_EXIT:
 	case VG_STATE_TERMINATED:
 	  do_set_config(vg, -1);	        // Free resources
-	  vg_set_state(VG_STATE_TERMINATED);	// Stop the thread
+	  vg_set_state(vg, VG_STATE_TERMINATED);	// Stop the thread
 	  break;
 	}
 
