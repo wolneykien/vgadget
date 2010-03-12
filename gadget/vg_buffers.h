@@ -34,9 +34,7 @@ struct vg_buffer_queue {
 }
 
 /* Allocation and free prototypes */
-static int vg_allocate_buffers(struct vg_buffer_queue *bufq,
-			       struct usb_ep *ep);
-static int vg_free_buffers(struct vg_buffer_queue *bufq,
-			   struct usb_ep *ep);
-static void vg_free_requests(struct vg_buffer_queue *bufq,
-			     struct usb_ep *ep)
+int vg_allocate_requests(struct vg_buffer_queue *bufq, struct usb_ep *ep);
+int vg_allocate_buffers(struct vg_buffer_queue *bufq, struct usb_ep *ep);
+int vg_free_buffers(struct vg_buffer_queue *bufq, struct usb_ep *ep);
+void vg_free_requests(struct vg_buffer_queue *bufq, struct usb_ep *ep)

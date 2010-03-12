@@ -73,9 +73,9 @@ typedef void (*vg_dev_proc_t)(struct vg_dev *);
 
 
 /* Lifecycle prototypes */
-static int __init vg_alloc(struct vg_dev *vg);
-static void vg_free(struct vg_dev *vg);
+int vg_alloc(struct vg_dev *vg);
+void vg_free(struct vg_dev *vg);
 
 /* Exception handling prototypes */
-static void raise_exception(struct vg_dev *vg, enum vg_state new_state);
-static int inline exception_in_progress(struct vg_dev *vg);
+void raise_exception(struct vg_dev *vg, enum vg_state new_state);
+int inline exception_in_progress(struct vg_dev *vg);
