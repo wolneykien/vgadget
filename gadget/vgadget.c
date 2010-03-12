@@ -249,7 +249,7 @@ static const struct usb_descriptor_header *fs_function[] = {
 #define MAX_PACKET_SIZE 512
 
 /* High-speed USB device qualifier */
-static struct usb_device_qualifier
+static struct usb_qualifier_descriptor
 dev_qualifier = {
 	.bLength =		sizeof dev_qualifier,
 	.bDescriptorType =	USB_DT_DEVICE_QUALIFIER,
