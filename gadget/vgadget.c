@@ -418,7 +418,7 @@ static int __init vg_init(void)
 	    MDBG("Tell the thread to start working\n");
 	    complete(&the_vg->thread_ctl.thread_notifier);
 	  } else {
-	    vg_free(vg);
+	    vg_free(the_vg);
 	    MERROR("Unable to register driver\n");
 	  }
 	} else {
