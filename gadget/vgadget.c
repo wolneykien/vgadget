@@ -868,6 +868,7 @@ static void vg_unbind(struct usb_gadget *gadget)
 
 	/* If the thread isn't already dead, tell it to exit now */
 	if (vg->state != VG_STATE_TERMINATED) {
+	  DBG(vg, "Tell the main thread to exit and wait for it\n");
 		raise_exception(vg, VG_STATE_EXIT);
 		wait_for_completion(&vg->thread_ctl.thread_notifier);
 
@@ -876,16 +877,19 @@ static void vg_unbind(struct usb_gadget *gadget)
 	}
 
 	/* Free the data buffers */
+	DBG(vg, "Free data buffers\n");
 	vg_free_buffers(&vg->out_bufq, vg->bulk_out);
 	vg_free_buffers(&vg->in_bufq, vg->bulk_in);
 	vg_free_buffers(&vg->in_status_bufq, vg->bulk_status_in);
 
-	/* Free the request and buffer for endpoint 0 */
+	/* Free the request and a buffer for endpoint 0 */
 	if (vg->ep0_req) {
 	  if (vg->ep0_req->buf) {
+	    DBG(vg, "Free ep 0 buffer\n");
 	    usb_ep_free_buffer(vg->ep0, vg->ep0_req->buf,
 			       vg->ep0_req->dma, EP0_BUFSIZE);
 	  }
+	  DBG(vg, "Free ep 0 request\n");
 	  usb_ep_free_request(vg->ep0, vg->eq0_req);
 	}
 
