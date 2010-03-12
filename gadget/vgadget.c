@@ -840,7 +840,7 @@ static int __init vg_bind(struct usb_gadget *gadget)
 	  if (vg->ep0_req) {
 	    vg->ep0_req->buf =
 	      usb_ep_alloc_buffer(vg->ep0, EP0_BUFSIZE,
-				  &vg_ep0_req->dma, GFP_KERNEL);
+				  &vg->ep0_req->dma, GFP_KERNEL);
 	    if (vg->ep0_req->buf) {
 	      vg->ep0_req->complete = ep0_complete;
 	      rc = 0;
