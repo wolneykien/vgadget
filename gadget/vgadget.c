@@ -944,24 +944,28 @@ static int class_setup_req(struct vg_dev *vg,
 static int populate_config_buf(struct usb_gadget *gadget,
 			       u8 *buf, u8 type, unsigned index)
 {
-#ifdef CONFIG_USB_GADGET_DUALSPEED
-	enum usb_device_speed speed = gadget->speed;
-#endif
+        struct vg_dev *vg = get_gadget_data(gadget);
 	int len;
 	const struct usb_descriptor_header **function;
 
 	if (index > 0) {
+	  ERROR(vg, "Configuration number out of rage (%d)\n", index);
 	  return -EINVAL;
 	}
 
 #ifdef CONFIG_USB_GADGET_DUALSPEED
-	if (type == USB_DT_OTHER_SPEED_CONFIG)
-		speed = (USB_SPEED_FULL + USB_SPEED_HIGH) - speed;
-	if (speed == USB_SPEED_HIGH)
-		function = hs_function;
-	else
+	if (type == USB_DT_OTHER_SPEED_CONFIG
+	    && speed == USB_SPEED_FULL) {
+	  DBG(vg, "Configure with high-speed functions\n");
+	  function = hs_function;
+	} else {
+	  DBG(vg, "Configure with full-speed functions\n");
+	  function = fs_function;
+	}
+#else
+	DBG(vg, "Configure with full-speed functions (default)\n");
+	function = fs_function;
 #endif
-		function = fs_function;
 
 	/* for now, don't advertise srp-only devices */
 	if (!gadget->is_otg)
