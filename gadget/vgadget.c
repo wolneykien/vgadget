@@ -634,17 +634,21 @@ static void __init vg_terminate(struct vg_dev *vg)
 }
 
 /* Configure the endpoint automatically */
-static void __init autoconfig_endpoint(struct vg_dev *vg,
+static int __init autoconfig_endpoint(struct vg_dev *vg,
 				       struct usb_ep *ep,
 				       struct usb_endpoint_descriptor *desc)
 {
+  int rc;
   ep = usb_ep_autoconfig(vg->gadget, desc);
   if (ep) {
     /* Claim the endpoint */
     ep->driver_data = vg;
+    rc = 0;
   } else {
-    return -ENOTSUPP;
+    rc = -ENOTSUPP;
   }
+
+  return rc;
 }
 
 
