@@ -1415,6 +1415,7 @@ static int do_set_interface(struct vg_dev *vg, int altsetting)
 	DBG(vg, "Set interface number %d\n", altsetting);
 
 	/* Enable the endpoints */
+#ifdef CONFIG_USB_GADGET_DUALSPEED
 	if (vg->gadget->speed == USB_SPEED_HIGH) {
 	  DBG(vg, "Enable high-speed endpoints\n");
 	  if ((rc = enable_endpoint(vg,
@@ -1433,6 +1434,7 @@ static int do_set_interface(struct vg_dev *vg, int altsetting)
 	    ERROR(vg, "Error while enable bulk-status-in endpoint\n");
 	  }
 	} else {
+#endif
 	  DBG(vg, "Enable full-speed endpoints\n");
 	  if ((rc = enable_endpoint(vg,
 				    vg->bulk_out,
@@ -1449,7 +1451,9 @@ static int do_set_interface(struct vg_dev *vg, int altsetting)
 				    &fs_bulk_status_in_desc)) != 0) {
 	    ERROR(vg, "Error while enable bulk-status-in endpoint\n");
 	  }
+#ifdef CONFIG_USB_GADGET_DUALSPEED
 	}
+#endif
 
 	/* Allocate the requests */
 	DBG(vg, "Allocate request objects for all queues\n");
