@@ -449,11 +449,14 @@ static int __init vg_alloc(struct vg_dev **vg)
 {
         int rc;
 
+	MDBG("Allocate the gadget device object\n");
 	*vg = kmalloc(sizeof *vg, GFP_KERNEL);
 	if (vg) {
 	  memset(*vg, 0, sizeof *vg);
+	  MDBG("Allocate the gadget device locks\n");
 	  spin_lock_init(&(*vg)->lock);
 	  init_rwsem(&(*vg)->filesem);
+	  MDBG("Allocate and init the gadget device thread wait queue\n");
 	  init_waitqueue_head(&(*vg)->thread_ctl.thread_wqh);
 	  init_completion(&(*vg)->thread_ctl.thread_notifier);
 	  rc = 0;
@@ -467,6 +470,7 @@ static int __init vg_alloc(struct vg_dev **vg)
 /* Frees memory used by this module */
 static void vg_free(struct vg_dev *vg)
 {
+        MDBG("Free the gadget device object\n");
 	kfree(vg);
 }
 
