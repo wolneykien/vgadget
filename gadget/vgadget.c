@@ -394,20 +394,22 @@ static int __init vg_init(void)
 {
 	int rc;
 
+	MDBG("Allocate the gadget device\n");
 	rc = vg_alloc(&the_vg);
 	if (rc == 0) {
+	  MDBG("Register the gadget device driver\n");
 	  rc = usb_gadget_register_driver(&vg_driver);
 	  if (rc == 0) {
 	    set_bit(REGISTERED, &the_vg->atomic_bitflags);
 	    /* Tell the thread to start working */
+	    MDBG("Tell the thread to start working\n");
 	    complete(&the_vg->thread_ctl.thread_notifier);
-	    MDBG("Driver registered\n");
 	  } else {
 	    vg_free(vg);
 	    MERROR("Unable to register driver\n");
 	  }
 	} else {
-	  MERROR("Unable to allocate the device object\n");
+	  MERROR("Unable to allocate the gadget device object\n");
 	}
 
 	return rc;
@@ -422,13 +424,15 @@ static void __exit vg_cleanup(void)
 	struct vg_dev	*vg = the_vg;
 
 	/* Unregister the driver iff the thread hasn't already done so */
-	if (test_and_clear_bit(REGISTERED, &vg->atomic_bitflags))
-		usb_gadget_unregister_driver(&vg_driver);
+	if (test_and_clear_bit(REGISTERED, &vg->atomic_bitflags)) {
+	  MDBG("Unregister the gadget device driver\n");
+	  usb_gadget_unregister_driver(&vg_driver);
+	}
 
 	/* Wait for the thread to finish up */
+	MDBG("Wait for the thread to finish up\n");
 	wait_for_completion(&vg->thread_notifier);
 
-	close_backing_file(vg);
 	vg_free(vg);
 }
 /* Set up the module exit handler */
