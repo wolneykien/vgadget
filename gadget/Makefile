@@ -1,9 +1,12 @@
-obj-m += vgadget.o
+LINUX_DIR=/lib/modules/$(shell uname -r)/build
+#GADGET_DIR=$(LINUX_DIR)/drivers/usb/gadget
 
-LINUX_BUILD_DIR=/lib/modules/$(shell uname -r)/build
+obj-m += vgadget.o
+#vgadget-objs := usbstring.o config.o epautoconf.o
+
 
 all:
-	make -C $(LINUX_BUILD_DIR) M=$(PWD) modules
+	make -C $(LINUX_DIR) M=$(PWD) modules
 
 clean:
-	make -C $(LINUX_BUILD_DIR) M=$(PWD) clean
+	make -C $(LINUX_DIR) M=$(PWD) clean
