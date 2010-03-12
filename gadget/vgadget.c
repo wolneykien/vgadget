@@ -574,6 +574,7 @@ static void vg_dequeue_all(struct vg_buffer_queue *bufq,
 {
   for (i = 0; i < VG_NUM_BUFFERS; ++i) {
     if (vg->buffhds[i].req_busy) {
+      MDBG("Dequeue a request number %d for %s\n", i, ep->name);
       usb_ep_dequeue(ep, bufq->buffhds[i].req);
     }
   }
