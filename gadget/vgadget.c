@@ -1536,7 +1536,7 @@ static void handle_exception(struct vg_dev *vg)
 	DBG(vg, "Cancell all the pending transfers\n");
 	vg_dequeue_all(&vg->out_bufq, vg->bulk_out);
 	vg_dequeue_all(&vg->in_bufq, vg->bulk_in);
-	vg_dequeue_all(&vg->status_in_bufq, vg->status_in_out);
+	vg_dequeue_all(&vg->status_in_bufq, vg->bulk_status_in);
 
 	/* Wait until everything is idle */
 	while (!vg_no_transfers(&vg->out_bufq)
