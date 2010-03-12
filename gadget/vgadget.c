@@ -450,8 +450,8 @@ static int __init vg_alloc(struct vg_dev *vg)
 	  memset(vg, 0, sizeof *vg);
 	  spin_lock_init(&vg->lock);
 	  init_rwsem(&vg->filesem);
-	  init_waitqueue_head(&vg->thread_wqh);
-	  init_completion(&vg->thread_notifier);
+	  init_waitqueue_head(&vg->thread_ctl.thread_wqh);
+	  init_completion(&vg->thread_ctl.thread_notifier);
 	  rc = 0;
 	} else {
 	  rc = -ENOMEM;
