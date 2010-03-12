@@ -661,6 +661,7 @@ static void raise_exception(struct vg_dev *vg, enum vg_state new_state)
 	 * and notify the main thread by sending it a signal. */
 	spin_lock_irqsave(&vg->lock, flags);
 	if (vg->state >= new_state) {
+	  VDBG(vg, "Set the exception state %d\n", new_state);
 		vg->exception_req_tag = vg->req_tag;
 		vg->state = new_state;
 		if (vg->thread_ctl.thread_task) {
