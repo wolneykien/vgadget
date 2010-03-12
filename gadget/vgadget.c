@@ -483,6 +483,7 @@ static void vg_allocate_requests(struct vg_buffer_queue *bufq,
 
   MDBG("Allocate %d requests for %s\n", VG_NUM_BUFFERS, ep->name);
   for (i = 0; rc == 0 && i < VG_NUM_BUFFERS; ++i) {
+    bufq->buffhds[i].req_busy = 0;
     if ((bufq->buffhds[i].req =
 	 usb_ep_alloc_request(ep, GFP_ATOMIC)) != NULL) {
       rc = 0;
@@ -1212,7 +1213,7 @@ static void bulk_complete(struct usb_ep *ep, struct usb_request *req)
 
 	/* Hold the lock while we update the request and buffer states */
 	spin_lock(&vg->lock);
-	bh->inreq_busy = 0;
+	bh->req_busy = 0;
 	bh->state = BUF_STATE_EMPTY; // TODO: STATE_FULL
 	spin_unlock(&vg->lock);
 	wakeup_thread(vg); // TODO: submit next buffer?
