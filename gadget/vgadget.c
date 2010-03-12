@@ -1397,9 +1397,9 @@ static int do_set_interface(struct vg_dev *vg, int altsetting)
 
 	/* Deallocate the requests */
 	DBG(vg, "Free request objects for all queues\n");
-	vg_free_requests(vg->out_bufq, vg->bulk_out);
-	vg_free_requests(vg->in_bufq, vg->bulk_in);
-	vg_free_requests(vg->status_in_bufq, vg->bulk_status_in);
+	vg_free_requests(&vg->out_bufq, vg->bulk_out);
+	vg_free_requests(&vg->in_bufq, vg->bulk_in);
+	vg_free_requests(&vg->status_in_bufq, vg->bulk_status_in);
 
 	/* Disable the endpoints */
 	DBG(vg, "Disable all endpoints\n");
@@ -1454,17 +1454,17 @@ static int do_set_interface(struct vg_dev *vg, int altsetting)
 	/* Allocate the requests */
 	DBG(vg, "Allocate request objects for all queues\n");
 	if (rc == 0) {
-	  if ((rc = vg_allocate_requests(vg->out_bufq, vg->bulk_out)) != 0) {
+	  if ((rc = vg_allocate_requests(&vg->out_bufq, vg->bulk_out)) != 0) {
 	    ERROR(vg, "Unable to allocate request for the bulk-out queue\n");
 	  }
 	}
 	if (rc == 0) {
-	  if ((rc = vg_allocate_requests(vg->in_bufq, vg->bulk_in)) != 0) {
+	  if ((rc = vg_allocate_requests(&vg->in_bufq, vg->bulk_in)) != 0) {
 	    ERROR(vg, "Unable to allocate request for the bulk-in queue\n");
 	  }
 	}
 	if (rc == 0) {
-	  if ((rc = vg_allocate_requests(vg->status_in_bufq,
+	  if ((rc = vg_allocate_requests(&vg->status_in_bufq,
 					 vg->bulk_status_in)) != 0) {
 	    ERROR(vg, "Unable to allocate request for the bulk-status-in "
 		      "queue\n");
@@ -1530,14 +1530,14 @@ static void handle_exception(struct vg_dev *vg)
 
 	/* Cancel all the pending transfers */
 	DBG(vg, "Cancell all the pending transfers\n");
-	vg_dequeue_all(vg->out_bufq, vg->bulk_out);
-	vg_dequeue_all(vg->in_bufq, vg->bulk_in);
-	vg_dequeue_all(vg->status_in_bufq, vg->status_in_out);
+	vg_dequeue_all(&vg->out_bufq, vg->bulk_out);
+	vg_dequeue_all(&vg->in_bufq, vg->bulk_in);
+	vg_dequeue_all(&vg->status_in_bufq, vg->status_in_out);
 
 	/* Wait until everything is idle */
-	while (!vg_no_transfers(vg->out_bufq)
-	       || !vg_no_transfers(vg->in_bufq)
-	       || !vg_no_transfers(vg->status_in_bufq)) {
+	while (!vg_no_transfers(&vg->out_bufq)
+	       || !vg_no_transfers(&vg->in_bufq)
+	       || !vg_no_transfers(&vg->status_in_bufq)) {
 	  DBG(vg, "Wait until everything is idle\n");
 	  if ((rc = sleep_thread(vg)) != 0) {
 	    WARN(vg, "Interrupted while handle the exception\n");
@@ -1553,9 +1553,9 @@ static void handle_exception(struct vg_dev *vg)
 
 	/* Reset the queue pointers */
 	DBG(vg, "Reset the queue pointers\n");
-	vg_reset_queue(vg->out_bufq);
-	vg_reset_queue(vg->in_bufq);
-	vg_reset_queue(vg->status_in_bufq);
+	vg_reset_queue(&vg->out_bufq);
+	vg_reset_queue(&vg->in_bufq);
+	vg_reset_queue(&vg->status_in_bufq);
 
 	exception_req_tag = vg->exception_req_tag;
 	new_config = vg->new_config;
