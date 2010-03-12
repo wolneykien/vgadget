@@ -992,7 +992,7 @@ static int populate_config_buf(struct usb_gadget *gadget,
 
 #ifdef CONFIG_USB_GADGET_DUALSPEED
 	if (type == USB_DT_OTHER_SPEED_CONFIG
-	    && speed == USB_SPEED_FULL) {
+	    && gadget->speed == USB_SPEED_FULL) {
 	  DBG(vg, "Configure with high-speed functions\n");
 	  function = hs_function;
 	} else {
