@@ -669,14 +669,21 @@ static int sleep_thread(struct vg_dev *vg)
 	int rc;
 
 	/* Wait until a signal arrives or we are woken up */
-	rc = wait_event_interruptible(vg->thread_ctl.thread_wqh,
-				      vg->thread_ctl.thread_wakeup_needed);
-	vg->thread_ctl.thread_wakeup_needed = 0;
-	if (current->flags & PF_FREEZE) {
-	  refrigerator(PF_FREEZE);
+	for (;;) {
+		try_to_freeze();
+		set_current_state(TASK_INTERRUPTIBLE);
+		if (signal_pending(current)) {
+			rc = -EINTR;
+			break;
+		}
+		if (vg->thread_ctl.thread_wakeup_needed)
+			break;
+		schedule();
 	}
+	__set_current_state(TASK_RUNNING);
+	vg->thread_ctl.thread_wakeup_needed = 0;
 
-	return (rc ? -EINTR : 0);
+	return rc;
 }
 
 
