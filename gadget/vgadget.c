@@ -617,7 +617,7 @@ static int vg_no_transfers(struct vg_buffer_queue *bufq)
 static void vg_reset_queue(struct vg_buffer_queue *bufq)
 {
   bufq->next_buffhd_to_fill =
-    bufq->next_buffhd_to_drain = bufq->buffhds[0];
+    bufq->next_buffhd_to_drain = &bufq->buffhds[0];
 }
 
 /* Validates the gadget device parameters */
