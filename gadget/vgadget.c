@@ -902,7 +902,7 @@ static int __init vg_bind(struct usb_gadget *gadget)
 	    INFO(vg, DRIVER_DESC ", version: " DRIVER_VERSION "\n");
 	    INFO(vg, "VendorID=x%04x, ProductID=x%04x, Release=x%04x\n",
 		 mod_data.vendor, mod_data.product, mod_data.release);
-	    DBG(vg, "I/O thread pid: %d\n", vg->thread_pid);
+	    DBG(vg, "I/O thread pid: %d\n", vg->thread_ctl.thread_pid);
 	  } else {
 	    ERROR(vg, "Error while allocating the main thread\n");
 	  }
