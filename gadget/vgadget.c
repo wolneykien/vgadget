@@ -900,12 +900,10 @@ static void vg_unbind(struct usb_gadget *gadget)
 static int class_setup_req(struct vg_dev *vg,
 			   const struct usb_ctrlrequest *ctrl)
 {
-	struct usb_request	*req = vg->ep0_req;
 	int			value = -EOPNOTSUPP;
-	u16			wIndex = le16_to_cpu(ctrl->wIndex);
-	u16			wLength = le16_to_cpu(ctrl->wLength);
 
 	if (!vg->config) {
+	  ERROR(vg, "No configuration number specified\n");
 	  return value;
 	}
 
@@ -915,25 +913,29 @@ static int class_setup_req(struct vg_dev *vg,
 	  if (ctrl->bRequestType != (USB_DIR_OUT |
 				     USB_TYPE_CLASS | USB_RECIP_INTERFACE))
 	    break;
-	  if (wIndex != 0) {
+	  if (le16_to_cpu(ctrl->wIndex) != 0) {
 	    value = -EDOM;
 	    break;
 	  }
 
 	  /* Raise an exception to stop the current operation
 	   * and reinitialize our state. */
-	  DBG(vg, "bulk reset request\n");
+	  DBG(vg, "Bulk reset request\n");
 	  raise_exception(vg, VG_STATE_RESET);
 	  value = DELAYED_STATUS;
 	  break;
 	}
 
-	if (value == -EOPNOTSUPP)
-		VDBG(vg,
-		     "unknown class-specific control req "
-		     "%02x.%02x v%04x i%04x l%u\n",
-		     ctrl->bRequestType, ctrl->bRequest,
-		     wValue, wIndex, wLength);
+	if (value == -EOPNOTSUPP) {
+	  VDBG(vg,
+	       "Unknown class-specific control req "
+	       "%02x.%02x v%04x i%04x l%u\n",
+	       ctrl->bRequestType,
+	       ctrl->bRequest,
+	       le16_to_cpu(ctrl->wValue),
+	       le16_to_cpu(ctrl->wIndex),
+	       le16_to_cpu(ctrl->wLength));
+	}
 
 	return value;
 }
