@@ -1298,16 +1298,15 @@ static int halt_bulk_in_endpoint(struct vg_dev *vg, struct usb_ep *ep)
 /* Read next command */
 static int get_next_command(struct vg_dev *vg)
 {
-	struct vg_buffhd  *bh;
-	int rc = 0;
+	int rc = 1;
 
 	return rc;
 }
 
 /* Process the command */
-static int get_next_command(struct vg_dev *vg)
+static int process_command(struct vg_dev *vg)
 {
-	int rc = 0;
+	int rc = 1;
 
 	return rc;
 }
