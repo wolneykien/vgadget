@@ -873,7 +873,7 @@ static int __init vg_bind(struct usb_gadget *gadget)
 	    }
 	  }
 	  if (rc == 0) {
-	    if ((rc = vg_allocate_buffers(&vg->in_status_bufq,
+	    if ((rc = vg_allocate_buffers(&vg->status_in_bufq,
 					  vg->bulk_status_in)) != 0) {
 	      ERROR(vg, "Unable to allocate buffer for the host-status-input "
 		    "queue\n");
@@ -932,7 +932,7 @@ static void vg_unbind(struct usb_gadget *gadget)
 	DBG(vg, "Free data buffers\n");
 	vg_free_buffers(&vg->out_bufq, vg->bulk_out);
 	vg_free_buffers(&vg->in_bufq, vg->bulk_in);
-	vg_free_buffers(&vg->in_status_bufq, vg->bulk_status_in);
+	vg_free_buffers(&vg->status_in_bufq, vg->bulk_status_in);
 
 	/* Free the request and a buffer for endpoint 0 */
 	if (vg->ep0_req) {
@@ -1387,7 +1387,7 @@ static int do_set_interface(struct vg_dev *vg, int altsetting)
 	DBG(vg, "Free request objects for all queues\n");
 	vg_free_requests(vg->out_bufq, vg->bulk_out);
 	vg_free_requests(vg->in_bufq, vg->bulk_in);
-	vg_free_requests(vg->in_status_bufq, vg->bulk_status_in);
+	vg_free_requests(vg->status_in_bufq, vg->bulk_status_in);
 
 	/* Disable the endpoints */
 	DBG(vg, "Disable all endpoints\n");
