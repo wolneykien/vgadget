@@ -1183,7 +1183,7 @@ static void ep0_complete(struct usb_ep *ep, struct usb_request *req)
 		usb_ep_fifo_flush(ep);
 
 	if (req->status == 0 && req->context)
-		((vg_routine_t) (req->context))(vg);
+		((vg_dev_proc_t) (req->context))(vg);
 }
 
 /* Setup the gadget parameters from the given control request */
