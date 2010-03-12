@@ -1318,9 +1318,11 @@ static int enable_endpoint(struct vg_dev *vg, struct usb_ep *ep,
 	int	rc;
 
 	ep->driver_data = vg;
+	DBG(vg, "Enable endpoint %s\n", ep->name);
 	rc = usb_ep_enable(ep, d);
-	if (rc)
-		ERROR(vg, "can't enable %s, result %d\n", ep->name, rc);
+	if (rc) {
+	  ERROR(vg, "Can't enable enpoint %s: %d\n", ep->name, rc);
+	}
 	return rc;
 }
 
