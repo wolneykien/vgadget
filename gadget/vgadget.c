@@ -475,8 +475,8 @@ static void vg_free(struct vg_dev *vg)
 }
 
 /* Allocates a buffer queue request objects */
-static void vg_allocate_requests(struct vg_buffer_queue *bufq,
-				 struct usb_ep *ep)
+static int vg_allocate_requests(struct vg_buffer_queue *bufq,
+				struct usb_ep *ep)
 {
   int i;
   int rc = 0;
