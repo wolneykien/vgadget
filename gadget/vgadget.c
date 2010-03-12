@@ -600,7 +600,7 @@ static void vg_dequeue_all(struct vg_buffer_queue *bufq,
 }
 
 /* Indicates are all transfers are idle */
-static void vg_no_transfers(struct vg_buffer_queue *bufq)
+static int vg_no_transfers(struct vg_buffer_queue *bufq)
 {
   int i;
 
