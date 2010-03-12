@@ -382,7 +382,7 @@ module_param_named(release, mod_data.release, ushort, S_IRUGO);
 MODULE_PARM_DESC(release, "USB release number");
 
 module_param_named(vendor_name, mod_data.vendor_name, charp, S_IRUGO);
-MODULE_PARM_DESC(note, "Vendor name");
+MODULE_PARM_DESC(vendor_name, "Vendor name");
 
 module_param_named(product_name, mod_data.product_name, charp, S_IRUGO);
 MODULE_PARM_DESC(product_name, "Product name");
