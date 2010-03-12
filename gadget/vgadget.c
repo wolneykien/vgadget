@@ -394,7 +394,7 @@ static int __init vg_init(void)
 {
 	int rc;
 
-	rc = vg_alloc(the_vg);
+	rc = vg_alloc(&the_vg);
 	if (rc == 0) {
 	  rc = usb_gadget_register_driver(&vg_driver);
 	  if (rc == 0) {
@@ -441,17 +441,17 @@ module_exit(vg_cleanup);
  */
 
 /* Allocates memory and scheduler objects used by this module */
-static int __init vg_alloc(struct vg_dev *vg)
+static int __init vg_alloc(struct vg_dev **vg)
 {
         int rc;
 
-	vg = kmalloc(sizeof *vg, GFP_KERNEL);
+	*vg = kmalloc(sizeof *vg, GFP_KERNEL);
 	if (vg) {
-	  memset(vg, 0, sizeof *vg);
-	  spin_lock_init(&vg->lock);
-	  init_rwsem(&vg->filesem);
-	  init_waitqueue_head(&vg->thread_ctl.thread_wqh);
-	  init_completion(&vg->thread_ctl.thread_notifier);
+	  memset(*vg, 0, sizeof *vg);
+	  spin_lock_init(&(*vg)->lock);
+	  init_rwsem(&(*vg)->filesem);
+	  init_waitqueue_head(&(*vg)->thread_ctl.thread_wqh);
+	  init_completion(&(*vg)->thread_ctl.thread_notifier);
 	  rc = 0;
 	} else {
 	  rc = -ENOMEM;
