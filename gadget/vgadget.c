@@ -107,7 +107,7 @@ static struct {
         char            *vendor_name;
         char            *product_name;
 	char		*serial;
-        char            *filename
+        char            *filename;
 } mod_data = {					// Default values
 	.vendor		= DRIVER_VENDOR_ID,
 	.product	= DRIVER_PRODUCT_ID,
