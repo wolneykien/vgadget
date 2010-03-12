@@ -942,7 +942,7 @@ static void vg_unbind(struct usb_gadget *gadget)
 			       vg->ep0_req->dma, EP0_BUFSIZE);
 	  }
 	  DBG(vg, "Free ep 0 request\n");
-	  usb_ep_free_request(vg->ep0, vg->eq0_req);
+	  usb_ep_free_request(vg->ep0, vg->ep0_req);
 	}
 
 	set_gadget_data(gadget, NULL);
