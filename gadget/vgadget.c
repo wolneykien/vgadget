@@ -487,6 +487,9 @@ static void vg_free(struct vg_dev *vg)
 	kfree(vg);
 }
 
+/* Completion procedure prototype */
+static void bulk_complete(struct usb_ep *ep, struct usb_request *req);
+
 /* Allocates a buffer queue request objects */
 static int vg_allocate_requests(struct vg_buffer_queue *bufq,
 				struct usb_ep *ep)
