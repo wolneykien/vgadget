@@ -991,19 +991,20 @@ static int standard_setup_req(struct vg_dev *vg,
 	switch (ctrl->bRequest) {
 
 	case USB_REQ_GET_DESCRIPTOR:
+	  VDBG(vg, "Get descriptor request\n");
 		if (ctrl->bRequestType != (USB_DIR_IN | USB_TYPE_STANDARD |
 				USB_RECIP_DEVICE))
 			break;
 		switch (wValue >> 8) {
 
 		case USB_DT_DEVICE:
-			VDBG(vg, "get device descriptor\n");
+			VDBG(vg, "Get device descriptor\n");
 			value = min(wLength, (u16) sizeof device_desc);
 			memcpy(req->buf, &device_desc, value);
 			break;
 #ifdef CONFIG_USB_GADGET_DUALSPEED
 		case USB_DT_DEVICE_QUALIFIER:
-			VDBG(vg, "get device qualifier\n");
+			VDBG(vg, "Get device qualifier\n");
 			if (!vg->gadget->is_dualspeed)
 				break;
 			value = min(wLength, (u16) sizeof dev_qualifier);
@@ -1011,12 +1012,12 @@ static int standard_setup_req(struct vg_dev *vg,
 			break;
 
 		case USB_DT_OTHER_SPEED_CONFIG:
-			VDBG(vg, "get other-speed config descriptor\n");
+			VDBG(vg, "Get other-speed config descriptor\n");
 			if (!vg->gadget->is_dualspeed)
 				break;
 #endif
 		case USB_DT_CONFIG:
-			VDBG(vg, "get configuration descriptor\n");
+			VDBG(vg, "Get configuration descriptor\n");
 			value = populate_config_buf(vg->gadget,
 					req->buf,
 					wValue >> 8,
@@ -1026,7 +1027,7 @@ static int standard_setup_req(struct vg_dev *vg,
 			break;
 
 		case USB_DT_STRING:
-			VDBG(vg, "get string descriptor\n");
+			VDBG(vg, "Get string descriptor\n");
 
 			/* wIndex == language code */
 			value = usb_gadget_get_string(&stringtab,
@@ -1039,10 +1040,10 @@ static int standard_setup_req(struct vg_dev *vg,
 
 	/* One config, two speeds */
 	case USB_REQ_SET_CONFIGURATION:
+	  VDBG(vg, "Set configuration request\n");
 		if (ctrl->bRequestType != (USB_DIR_OUT | USB_TYPE_STANDARD |
 				USB_RECIP_DEVICE))
 			break;
-		VDBG(vg, "set configuration\n");
 		if (wValue == CONFIG_VALUE || wValue == 0) {
 			vg->new_config = wValue;
 
@@ -1053,15 +1054,16 @@ static int standard_setup_req(struct vg_dev *vg,
 		}
 		break;
 	case USB_REQ_GET_CONFIGURATION:
+	  VDBG(vg, "Get configuration request\n");
 		if (ctrl->bRequestType != (USB_DIR_IN | USB_TYPE_STANDARD |
 				USB_RECIP_DEVICE))
 			break;
-		VDBG(vg, "get configuration\n");
 		*(u8 *) req->buf = vg->config;
 		value = min(wLength, (u16) 1);
 		break;
 
 	case USB_REQ_SET_INTERFACE:
+	  VDBG(vg, "Set interface request\n");
 		if (ctrl->bRequestType != (USB_DIR_OUT| USB_TYPE_STANDARD |
 				USB_RECIP_INTERFACE))
 			break;
@@ -1075,6 +1077,7 @@ static int standard_setup_req(struct vg_dev *vg,
 		}
 		break;
 	case USB_REQ_GET_INTERFACE:
+	  VDBG(vg, "Get interface\n");
 		if (ctrl->bRequestType != (USB_DIR_IN | USB_TYPE_STANDARD |
 				USB_RECIP_INTERFACE))
 			break;
@@ -1084,14 +1087,13 @@ static int standard_setup_req(struct vg_dev *vg,
 			value = -EDOM;
 			break;
 		}
-		VDBG(vg, "get interface\n");
 		*(u8 *) req->buf = 0;
 		value = min(wLength, (u16) 1);
 		break;
 
 	default:
 		VDBG(vg,
-		     "unknown control req %02x.%02x v%04x i%04x l%u\n",
+		     "Unknown control req %02x.%02x v%04x i%04x l%u\n",
 		     ctrl->bRequestType, ctrl->bRequest,
 		     wValue, wIndex, wLength);
 	}
