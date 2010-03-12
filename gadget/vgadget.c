@@ -672,9 +672,10 @@ static void raise_exception(struct vg_dev *vg, enum vg_state new_state)
 }
 
 /* Sets the device state */
-static void vg_set_status(struct vg_dev *vg, enum vg_state new_state)
+static void vg_set_state(struct vg_dev *vg, enum vg_state new_state)
 {
   spin_lock_irq(&vg->lock);
+  DBG(vg, "New device state: %d\n", new_state);
   vg->state = new_state;
   spin_unlock_irq(&vg->lock);
 }
@@ -1344,7 +1345,7 @@ static int do_set_interface(struct vg_dev *vg, int altsetting)
 	usb_ep_disable(vg->bulk_out);
 	usb_ep_disable(vg->bulk_in);
 	usb_ep_disable(vg->bulk_status_in);
-	vg_set_status(vg, VG_STATE_IDLE);
+	vg_set_state(vg, VG_STATE_IDLE);
 
 	if (altsetting < 0) {
 	  return rc;
@@ -1409,7 +1410,7 @@ static int do_set_interface(struct vg_dev *vg, int altsetting)
 	  }
 	}
 
-	vg_set_status(vg, VG_STATE_RUNNUNG);
+	vg_set_state(vg, VG_STATE_RUNNUNG);
 
 	return rc;
 }
@@ -1568,15 +1569,15 @@ static int vg_main_thread(void *vg_)
 
 	/* The main loop */
 	while (vg->state != VG_STATE_TERMINATED) {
-	  vg_set_status(vg, VG_STATE_INDLE);
+	  vg_set_state(vg, VG_STATE_INDLE);
 	  sleep_thread(vg);
 	  if (exception_in_progress(vg)) {
 	    handle_exception(vg);
 	    continue;
 	  }
-	  vg_set_status(vg, VG_STATE_RUNNING);
+	  vg_set_state(vg, VG_STATE_RUNNING);
 	  if (get_next_command(vg)) {
-	    vg_set_status(vg, VG_STATE_DATA_PHASE);
+	    vg_set_state(vg, VG_STATE_DATA_PHASE);
 	    process_command(vg);
 	  }
 	}
