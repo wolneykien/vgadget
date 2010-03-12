@@ -1310,7 +1310,7 @@ static int start_transfer(struct vg_dev *vg, struct usb_ep *ep,
 }
 
 /* Sets the endpoint halt status */
-static int fsg_set_halt(struct vg_dev *vg, struct usb_ep *ep)
+static int vg_set_halt(struct vg_dev *vg, struct usb_ep *ep)
 {
 	const char *name;
 
