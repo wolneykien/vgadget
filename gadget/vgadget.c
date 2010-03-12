@@ -721,35 +721,38 @@ static int __init vg_bind(struct usb_gadget *gadget)
 	vg->ep0 = gadget->ep0;
 	vg->ep0->driver_data = vg;
 
-	rc = check_parameters(vg);
-	if (rc != 0) {
+	if ((rc = check_parameters(vg)) != 0) {
 	  ERROR(vg, "Invalid parameter(s) passed\n");
 	}
 
 	if (rc == 0) {
 	  /* Find all the endpoints we will use */
+	  DBG(vg, "Endpoint autoconfguration\n");
 	  usb_ep_autoconfig_reset(gadget);
-	  rc = autoconfig_endpoint(vg, vg->bulk_out, &fs_bulk_out_desc);
+	  if ((rc = autoconfig_endpoint(vg,
+					vg->bulk_out,
+					&fs_bulk_out_desc)) != 0) {
+	    ERROR(vg, "Bulk-out endpoint autoconfiguration failed\n");
+	  }
 	  if (rc == 0) {
-	    rc = autoconfig_endpoint(vg, vg->bulk_in, &fs_bulk_in_desc);
-	    if (rc == 0) {
-	      rc = autoconfig_endpoint(vg,
-				       vg->bulk_status_in,
-				       &fs_bulk_status_in_desc);
-	      if (rc != 0) {
-		ERROR(vg,
-		      "Bulk-status-out endpoint autoconfiguration failed\n");
-	      }
-	    } else {
+	    if ((rc = autoconfig_endpoint(vg,
+					  vg->bulk_in,
+					  &fs_bulk_in_desc)) != 0) {
 	      ERROR(vg, "Bulk-in endpoint autoconfiguration failed\n");
 	    }
-	  } else {
-	    ERROR(vg, "Bulk-out endpoint autoconfiguration failed\n");
+	  }
+	  if (rc == 0) {
+	    if ((rc = autoconfig_endpoint(vg,
+					  vg->bulk_status_in,
+					  &fs_bulk_status_in_desc)) != 0) {
+	      ERROR(vg, "Bulk-status-out endpoint autoconfiguration failed\n");
+	    }
 	  }
 	}
 
 	if (rc == 0) {
 	  /* Fix up the descriptors */
+	  DBG(vg, "Fix up device descriptors\n");
 	  device_desc.bMaxPacketSize0 = vg->ep0->maxpacket;
 	  device_desc.idVendor = cpu_to_le16(mod_data.vendor);
 	  device_desc.idProduct = cpu_to_le16(mod_data.product);
@@ -760,9 +763,11 @@ static int __init vg_bind(struct usb_gadget *gadget)
 
 	if (rc == 0) {
 	  /* Assume ep0 uses the same maxpacket value for both speeds */
+	  DBG(vg, "Set up high-speed ep0 max packet size\n");
 	  dev_qualifier.bMaxPacketSize0 = vg->ep0->maxpacket;
 
 	  /* Assume that all endpoint addresses are the same for both speeds */
+	  DBG(vg, "Set up high-speed endpoint addresses\n");
 	  hs_bulk_out_desc.bEndpointAddress = fs_bulk_out_desc.bEndpointAddress;
 	  hs_bulk_in_desc.bEndpointAddress = fs_bulk_in_desc.bEndpointAddress;
 	  hs_bulk_status_in_desc.bEndpointAddress = fs_bulk_status_in_desc.bEndpointAddress;
@@ -772,6 +777,7 @@ static int __init vg_bind(struct usb_gadget *gadget)
 	if (rc == 0) {
 	  /* Set OTG attributes */
 	  if (gadget->is_otg) {
+	    DBG(vg, "Set up OTG attributes\n");
 	    otg_desc.bmAttributes |= USB_OTG_HNP,
 	      config_desc.bmAttributes |= USB_CONFIG_ATT_WAKEUP;
 	  }
@@ -779,6 +785,7 @@ static int __init vg_bind(struct usb_gadget *gadget)
 
 	if (rc == 0) {
 	  /* Allocate the request and buffer for endpoint 0 */
+	  DBG(vg, "Allocate the request and buffer for endpoint 0\n");
 	  rc = -ENOMEM;
 	  vg->ep0_req = usb_ep_alloc_request(vg->ep0, GFP_KERNEL);
 	  if (vg->ep0_req) {
@@ -788,34 +795,49 @@ static int __init vg_bind(struct usb_gadget *gadget)
 	    if (vg->ep0_req->buf) {
 	      vg->ep0_req->complete = ep0_complete;
 	      rc = 0;
+	    } else {
+	      ERROR(vg, "Unable to allocate a buffer for endpoint 0\n");
 	    }
+	  } else {
+	    ERROR(vg, "Unable to allocate a request object for ep0\n");
 	  }
-	}
-	if (rc != 0) {
-	  ERROR(vg, "Error while allocating buffer for endpoint 0\n");
 	}
 
 	/* Allocate the data buffers */
 	if (rc == 0) {
-	  rc = vg_allocate_buffers(&vg->out_bufq, vg->bulk_out);
-	}
-	if (rc == 0) {
-	  rc = vg_allocate_buffers(&vg->in_bufq, vg->bulk_in);
-	}
-	if (rc == 0) {
-	  rc = vg_allocate_buffers(&vg->in_status_bufq, vg->bulk_status_in);
-	}
-	if (rc != 0) {
-	  ERROR(vg, "Error while allocating data buffers\n");
+	  DBG(vg, "Allocate the data buffers\n");
+	  if (rc == 0) {
+	    if ((rc = vg_allocate_buffers(&vg->out_bufq,
+					  vg->bulk_out)) != 0) {
+	      ERROR(vg, "Unable to allocate buffers for the host-output "
+		        "queue\n");
+	    }
+	  }
+	  if (rc == 0) {
+	    if ((rc = vg_allocate_buffers(&vg->in_bufq,
+					  vg->bulk_in)) != 0) {
+	      ERROR(vg, "Unable to allocate buffers for the host-input"
+		        " queue\n");
+	    }
+	  }
+	  if (rc == 0) {
+	    if ((rc = vg_allocate_buffers(&vg->in_status_bufq,
+					  vg->bulk_status_in)) != 0) {
+	      ERROR(vg, "Unable to allocate buffer for the host-status-input "
+		    "queue\n");
+	    }
+	  }
 	}
 
 	if (rc == 0) {
 	  /* This should reflect the actual gadget power source */
+	  DBG(vg, "Claim gadget as self-powered\n");
 	  usb_gadget_set_selfpowered(gadget);
 	}
 
 	if (rc == 0) {
 	  /* Setup the main thread */
+	  DBG(vg, "Set up the main thread\n");
 	  rc = kernel_thread(vg_main_thread,
 			     vg,
 			     (CLONE_VM | CLONE_FS | CLONE_FILES));
@@ -823,15 +845,15 @@ static int __init vg_bind(struct usb_gadget *gadget)
 	    vg->thread_ctl.thread_pid = rc;
 	    rc = 0;
 	  }
-	}
 
-	if (rc == 0) {
-	  INFO(vg, DRIVER_DESC ", version: " DRIVER_VERSION "\n");
-	  INFO(vg, "VendorID=x%04x, ProductID=x%04x, Release=x%04x\n",
-	       mod_data.vendor, mod_data.product, mod_data.release);
-	  DBG(vg, "I/O thread pid: %d\n", vg->thread_pid);
-	} else {
-	  ERROR(vg, "Error while allocating the main thread\n");
+	  if (rc == 0) {
+	    INFO(vg, DRIVER_DESC ", version: " DRIVER_VERSION "\n");
+	    INFO(vg, "VendorID=x%04x, ProductID=x%04x, Release=x%04x\n",
+		 mod_data.vendor, mod_data.product, mod_data.release);
+	    DBG(vg, "I/O thread pid: %d\n", vg->thread_pid);
+	  } else {
+	    ERROR(vg, "Error while allocating the main thread\n");
+	  }
 	}
 
 	return rc;
