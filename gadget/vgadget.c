@@ -75,7 +75,7 @@ static const char shortname[] = DRIVER_NAME;
 /* Claim module description */
 MODULE_DESCRIPTION(DRIVER_DESC);
 MODULE_AUTHOR("Paul Wolneykien");
-MODULE_LICENSE("GPLv2");
+MODULE_LICENSE("GPL");
 
 
 /* Default Id values */
