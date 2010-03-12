@@ -869,10 +869,10 @@ static void vg_unbind(struct usb_gadget *gadget)
 	/* If the thread isn't already dead, tell it to exit now */
 	if (vg->state != VG_STATE_TERMINATED) {
 		raise_exception(vg, VG_STATE_EXIT);
-		wait_for_completion(&vg->thread_notifier);
+		wait_for_completion(&vg->thread_ctl.thread_notifier);
 
 		/* The cleanup routine waits for this completion also */
-		complete(&vg->thread_notifier);
+		complete(&vg->thread_ctl.thread_notifier);
 	}
 
 	/* Free the data buffers */
