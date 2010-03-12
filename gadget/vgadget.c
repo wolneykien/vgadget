@@ -602,6 +602,8 @@ static void vg_dequeue_all(struct vg_buffer_queue *bufq,
 /* Indicates are all transfers are idle */
 static void vg_no_transfers(struct vg_buffer_queue *bufq)
 {
+  int i;
+
   for (i = 0; i < VG_NUM_BUFFERS; ++i) {
     if (bufq->buffhds[i].req_busy) {
       return 0;
