@@ -478,9 +478,11 @@ static void vg_free(struct vg_dev *vg)
 static void vg_allocate_requests(struct vg_buffer_queue *bufq,
 				 struct usb_ep *ep)
 {
-  int i, rc;
+  int i;
+  int rc = 0;
 
-  for (i = 0; i < VG_NUM_BUFFERS; ++i) {
+  MDBG("Allocate %d requests for %s\n", VG_NUM_BUFFERS, ep->name);
+  for (i = 0; rc == 0 && i < VG_NUM_BUFFERS; ++i) {
     if ((bufq->buffhds[i].req =
 	 usb_ep_alloc_request(ep, GFP_ATOMIC)) != NULL) {
       rc = 0;
@@ -502,14 +504,16 @@ static void vg_allocate_requests(struct vg_buffer_queue *bufq,
 static int vg_allocate_buffers(struct vg_buffer_queue *bufq,
 			       struct usb_ep *ep)
 {
-  int i, rc;
+  int i;
+  int rc = 0;
 
   if ((rc = vg_allocate_requests(bufq, ep)) != 0) {
     MERROR("Unable to allocate request objects\n");
   }
   
   if (rc == 0) {
-    for (i = 0; i < VG_NUM_BUFFERS; ++i) {
+    MDBG("Allocate %d buffers for %s\n", VG_NUM_BUFFERS, ep->name);
+    for (i = 0; rc == 0 && i < VG_NUM_BUFFERS; ++i) {
       bufq->buffhds[i].req->buf =
 	usb_ep_alloc_buffer(ep,
 			    VG_BUF_SIZE,
@@ -538,6 +542,7 @@ static void vg_free_requests(struct vg_buffer_queue *bufq,
 {
   int i;
 
+  MDBG("Free %d requests for %s\n", VG_NUM_BUFFERS, ep->name);
   for (i = 0; i < VG_NUM_BUFFERS; ++i) {
     if (bufq->buffhds[i].req) {
       usb_ep_free_request(ep, bufq->buffhds[i].req);
@@ -553,6 +558,7 @@ static void vg_free_buffers(struct vg_buffer_queue *bufq,
   int i;
 
   vg_free_requests(bufq, ep);
+  MDBG("Free %d buffers for %s\n", VG_NUM_BUFFERS, ep->name);
   for (i = 0; i < VG_NUM_BUFFERS; ++i) {
     usb_ep_free_buffer(ep,
 		       bufq->buffhds[i].buf,
