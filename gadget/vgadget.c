@@ -1263,11 +1263,15 @@ static void inline set_bulk_out_req_length(struct vg_dev *vg,
 	unsigned int    maxpacket;
 
 	bh->bulk_out_intended_length = length;
+#ifdef CONFIG_USB_GADGET_DUALSPEED
 	if (vg->gadget->speed == USB_SPEED_HIGH) {
 	  maxpacket = hs_bulk_in_desc.wMaxPacketSize;
 	} else {
 	  maxpacket = fs_bulk_in_desc.wMaxPacketSize;
 	} // TODO: use queue related endpoint descriptors
+#else
+	maxpacket = fs_bulk_in_desc.wMaxPacketSize;
+#endif
 	rem = length % maxpacket;
 	if (rem > 0)
 	  length += maxpacket - rem;
