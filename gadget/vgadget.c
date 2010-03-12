@@ -1110,7 +1110,7 @@ static int ep0_queue(struct vg_dev *vg)
 	rc = usb_ep_queue(vg->ep0, vg->ep0_req, GFP_ATOMIC);
 	if (rc != 0 && rc != -ESHUTDOWN) {
 	  /* We can't do much more than wait for a reset */
-	  WARN(vg, "error in submission: %s --> %d\n",
+	  WARN(vg, "Error in submission: %s --> %d\n",
 	       vg->ep0->name, rc);
 	}
 	return rc;
