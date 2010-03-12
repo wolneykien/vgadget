@@ -123,6 +123,7 @@ static struct {
 #define STRING_MANUFACTURER	1
 #define STRING_PRODUCT		2
 #define STRING_SERIAL		3
+#define STRING_CONFIG		4
 
 /* There is only one configuration. */
 #define	CONFIG_VALUE		1
@@ -188,10 +189,14 @@ intf_desc = {
 };
 
 /* String descriptors */
+static char manufacturer[32] = "N/A";
+static char product[32] = "N/A";
+static char serial[12] = "N/A";
 static struct usb_string		strings[] = {
-	{STRING_MANUFACTURER,	mod_data.vendor_name},
-	{STRING_PRODUCT,	mod_data.product_name},
-	{STRING_SERIAL,		mod_data.serial},
+	{STRING_MANUFACTURER,	manufacturer},
+	{STRING_PRODUCT,	product},
+	{STRING_SERIAL,		serial},
+	{STRING_CONFIG,		"Self-powered"},
 	{}
 };
 static struct usb_gadget_strings	stringtab = {
@@ -380,7 +385,7 @@ MODULE_PARM_DESC(note, "Vendor name");
 module_param_named(product_name, mod_data.product_name, charp, S_IRUGO);
 MODULE_PARM_DESC(product_name, "Product name");
 
-module_param_named(serial, mod_data.note, charp, S_IRUGO);
+module_param_named(serial, mod_data.serial, charp, S_IRUGO);
 MODULE_PARM_DESC(serial, "Gadget serial number");
 
 module_param_named(filename, mod_data.filename, charp, S_IRUGO);
@@ -393,6 +398,14 @@ static struct vg_dev *the_vg;
 static int __init vg_init(void)
 {
 	int rc;
+
+	MDBG("Process the module parameters\n");
+	snprintf(manufacturer, sizeof manufacturer, "%s",
+		 mod_data.vendor_name);
+	snprintf(product, sizeof product, "%s",
+		 mod_data.product_name);
+	snprintf(serial, sizeof product, "%s",
+		 mod_data.serial);
 
 	MDBG("Allocate the gadget device\n");
 	rc = vg_alloc(&the_vg);
