@@ -1420,9 +1420,11 @@ static int do_set_config(struct vg_dev *vg, u8 new_config)
 {
 	int	rc = 0;
 
+	VDBG(vg, "Reset the configuration\n");
+
 	/* Disable the single interface */
+	DBG(vg, "Disable the interface\n");
 	if (vg->config != 0) {
-		DBG(vg, "reset config\n");
 		vg->config = 0;
 		rc = do_set_interface(vg, -1);
 	}
@@ -1430,6 +1432,7 @@ static int do_set_config(struct vg_dev *vg, u8 new_config)
 	/* Enable the interface */
 	if (new_config != 0) {
 		vg->config = new_config;
+		DBG(vg, "Enable the interface\n");
 		if ((rc = do_set_interface(vg, 0)) != 0) {
 			vg->config = 0;	// Reset on errors
 			ERROR(vg, "Error set up the interface\n");
@@ -1442,7 +1445,9 @@ static int do_set_config(struct vg_dev *vg, u8 new_config)
 			case USB_SPEED_HIGH:	speed = "high";	break;
 			default: 		speed = "?";	break;
 			}
-			INFO(vg, "%s speed config #%d\n", speed, vg->config);
+			INFO(vg, "Set up the %s speed config number %d\n",
+			     speed,
+			     vg->config);
 		}
 	}
 	return rc;
