@@ -1172,7 +1172,7 @@ static void vg_disconnect(struct usb_gadget *gadget)
 {
 	struct vg_dev *vg = get_gadget_data(gadget);
 
-	DBG(vg, "disconnect or port reset\n");
+	DBG(vg, "Disconnect or port reset\n");
 	raise_exception(vg, VG_STATE_DISCONNECT);
 }
 
