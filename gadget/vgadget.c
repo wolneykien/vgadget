@@ -1139,24 +1139,27 @@ static int vg_setup(struct usb_gadget *gadget,
 {
 	struct vg_dev *vg = get_gadget_data(gadget);
 	int rc;
-	u16 wLength = le16_to_cpu(ctrl->wLength);
 
 	++vg->req_tag;		// Record arrival of a new request
+	DBG(vg, "Setup request number %d\n", vg->req_tag);
 	vg->ep0_req->context = NULL;
 	vg->ep0_req->length = 0;
 	dump_msg(vg, "ep0-setup", (u8 *) ctrl, sizeof(*ctrl));
 
 	if ((ctrl->bRequestType & USB_TYPE_MASK) == USB_TYPE_CLASS) {
+	  DBG(vg, "Class setup request\n");
 	  rc = class_setup_req(vg, ctrl);
 	} else {
+	  DBG(vg, "Standard setup request\n");
 	  rc = standard_setup_req(vg, ctrl);
 	}
 
 	/* Respond with data/status or defer until later? */
 	if (rc >= 0 && rc != DELAYED_STATUS) {
 		vg->ep0_req->length = rc;
-		vg->ep0_req->zero = (rc < wLength &&
+		vg->ep0_req->zero = (rc < le16_to_cpu(ctrl->wLength) &&
 				     (rc % gadget->ep0->maxpacket) == 0);
+		DBG(vg, "Respond with data/status\n");
 		rc = ep0_queue(vg);
 	}
 
