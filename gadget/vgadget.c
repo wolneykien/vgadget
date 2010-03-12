@@ -506,7 +506,7 @@ static int vg_allocate_requests(struct vg_buffer_queue *bufq,
     }
 
     if (rc == 0) {
-      bufq->buffhds[i].req->context = bufq->buffhds[i];
+      bufq->buffhds[i].req->context = &bufq->buffhds[i];
       bufq->buffhds[i].req->complete = bulk_complete;
     }
   }
