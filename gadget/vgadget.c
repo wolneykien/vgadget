@@ -1566,9 +1566,9 @@ static void handle_exception(struct vg_dev *vg)
 	old_state = vg->state;
 
 	if (old_state == VG_STATE_ABORT_BULK_OUT) {
-	  vg_set_state(VG_STATE_STATUS_PHASE);
+	  vg_set_state(vg, VG_STATE_STATUS_PHASE);
 	} else {
-	  vg_set_state(VG_STATE_IDLE);
+	  vg_set_state(vg, VG_STATE_IDLE);
 	}
 
 	/* Carry out any extra actions required for the exception */
@@ -1577,7 +1577,7 @@ static void handle_exception(struct vg_dev *vg)
 		break;
 
 	case VG_STATE_ABORT_BULK_OUT:
-	  vg_set_state(VG_STATE_IDLE);
+	  vg_set_state(vg, VG_STATE_IDLE);
 	  break;
 
 	case VG_STATE_RESET:
