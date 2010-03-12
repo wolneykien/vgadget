@@ -1331,15 +1331,16 @@ static int do_set_interface(struct vg_dev *vg, int altsetting)
 {
 	int rc = 0;
 
-	if (is_running(vg))
-	  DBG(vg, "reset interface\n");
+ 	VDBG(vg, "Reset the interface\n");
 
 	/* Deallocate the requests */
+	DBG(vg, "Free request objects for all queues\n");
 	vg_free_requests(vg->out_bufq, vg->bulk_out);
 	vg_free_requests(vg->in_bufq, vg->bulk_in);
 	vg_free_requests(vg->in_status_bufq, vg->bulk_status_in);
 
 	/* Disable the endpoints */
+	DBG(vg, "Disable all endpoints\n");
 	usb_ep_disable(vg->bulk_out);
 	usb_ep_disable(vg->bulk_in);
 	usb_ep_disable(vg->bulk_status_in);
@@ -1349,10 +1350,11 @@ static int do_set_interface(struct vg_dev *vg, int altsetting)
 	  return rc;
 	}
 
-	DBG(vg, "set interface %d\n", altsetting);
+	DBG(vg, "Set interface number %d\n", altsetting);
 
 	/* Enable the endpoints */
 	if (vg->gadget->speed == USB_SPEED_HIGH) {
+	  DBG(vg, "Enable high-speed endpoints\n");
 	  if ((rc = enable_endpoint(vg,
 				    vg->bulk_out,
 				    &hs_bulk_out_desc)) != 0) {
@@ -1369,6 +1371,7 @@ static int do_set_interface(struct vg_dev *vg, int altsetting)
 	    ERROR(vg, "Error while enable bulk-status-in endpoint\n");
 	  }
 	} else {
+	  DBG(vg, "Enable full-speed endpoints\n");
 	  if ((rc = enable_endpoint(vg,
 				    vg->bulk_out,
 				    &fs_bulk_out_desc)) != 0) {
@@ -1387,14 +1390,23 @@ static int do_set_interface(struct vg_dev *vg, int altsetting)
 	}
 
 	/* Allocate the requests */
+	DBG(vg, "Allocate request objects for all queues\n");
 	if (rc == 0) {
-	  rc = vg_allocate_requests(vg->out_bufq, vg->bulk_out);
+	  if ((rc = vg_allocate_requests(vg->out_bufq, vg->bulk_out)) != 0) {
+	    ERROR(vg, "Unable to allocate request for the bulk-out queue\n");
+	  }
 	}
 	if (rc == 0) {
-	  rc = vg_allocate_requests(vg->in_bufq, vg->bulk_in);
+	  if ((rc = vg_allocate_requests(vg->in_bufq, vg->bulk_in)) != 0) {
+	    ERROR(vg, "Unable to allocate request for the bulk-in queue\n");
+	  }
 	}
 	if (rc == 0) {
-	  rc = vg_allocate_requests(vg->status_in_bufq, vg->bulk_status_in);
+	  if ((rc = vg_allocate_requests(vg->status_in_bufq,
+					 vg->bulk_status_in)) != 0) {
+	    ERROR(vg, "Unable to allocate request for the bulk-status-in "
+		      "queue\n");
+	  }
 	}
 
 	vg_set_status(vg, VG_STATE_RUNNUNG);
