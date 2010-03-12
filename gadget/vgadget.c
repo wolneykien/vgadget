@@ -578,7 +578,7 @@ static void vg_free_buffers(struct vg_buffer_queue *bufq,
   for (i = 0; i < VG_NUM_BUFFERS; ++i) {
     usb_ep_free_buffer(ep,
 		       bufq->buffhds[i].req->buf,
-		       &bufq->buffhds[i].req->dma,
+		       bufq->buffhds[i].req->dma,
 		       VG_BUF_SIZE);
     bufq->buffhds[i].next = NULL;
   }
