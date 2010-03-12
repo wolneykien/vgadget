@@ -113,7 +113,8 @@ static struct {
 	.product	= DRIVER_PRODUCT_ID,
 };
 
-
+/* Bulk-only class specific requests */
+#define USB_BULK_RESET_REQUEST  0xff
 
 /*
  * Gadget USB device descriptors
