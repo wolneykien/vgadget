@@ -1461,7 +1461,14 @@ static void handle_exception(struct vg_dev *vg)
 	unsigned int		exception_req_tag;
 	int			rc;
 
+	if (!exception_in_progress(vg)) {
+	  return 0;
+	}
+
+	VDBG(vg, "Handle the exception state %d\n", vg->state);
+
 	/* Cancel all the pending transfers */
+	DBG(vg, "Cancell all the pending transfers\n");
 	vg_dequeue_all(vg->out_bufq, vg->bulk_out);
 	vg_dequeue_all(vg->in_bufq, vg->bulk_in);
 	vg_dequeue_all(vg->status_in_bufq, vg->status_in_out);
@@ -1470,17 +1477,21 @@ static void handle_exception(struct vg_dev *vg)
 	while (!vg_no_transfers(vg->out_bufq)
 	       || !vg_no_transfers(vg->in_bufq)
 	       || !vg_no_transfers(vg->status_in_bufq)) {
+	  DBG(vg, "Wait until everything is idle\n");
 	  if ((rc = sleep_thread(vg)) != 0) {
+	    WARN(vg, "Interrupted while handle the exception\n");
 	    return rc;
 	  }
 	}
 
 	/* Clear out the controller's fifos */
+	DBG(vg, "Clear out the controller's fifos\n");
 	usb_ep_fifo_flush(vg->bulk_out);
 	usb_ep_fifo_flush(vg->bulk_in);
 	usb_ep_fifo_flush(vg->bulk_status_in);
 
 	/* Reset the queue pointers */
+	DBG(vg, "Reset the queue pointers\n");
 	vg_reset_queue(vg->out_bufq);
 	vg_reset_queue(vg->in_bufq);
 	vg_reset_queue(vg->status_in_bufq);
@@ -1510,12 +1521,14 @@ static void handle_exception(struct vg_dev *vg)
 		 * requires this.) */
 		if (test_and_clear_bit(CLEAR_BULK_HALTS,
 				       &vg->atomic_bitflags)) {
+		  DBG(vg, "Clear bulk halts\n");
 		  usb_ep_clear_halt(vg->bulk_out);
 		  usb_ep_clear_halt(vg->bulk_in);
 		  usb_ep_clear_halt(vg->bulk_status_in);
 		}
 
 		if (vg->ep0_req_tag == exception_req_tag) {
+		  DBG(vg, "Enqueue to ep0 to c omplete the status stage\n");
 		  ep0_queue(vg);	// Complete the status stage
 		}
 		break;
