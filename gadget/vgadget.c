@@ -637,14 +637,14 @@ static void __init vg_terminate(struct vg_dev *vg)
 
 /* Configure the endpoint automatically */
 static int __init autoconfig_endpoint(struct vg_dev *vg,
-				       struct usb_ep *ep,
+				       struct usb_ep **ep,
 				       struct usb_endpoint_descriptor *desc)
 {
   int rc;
-  ep = usb_ep_autoconfig(vg->gadget, desc);
-  if (ep) {
+  *ep = usb_ep_autoconfig(vg->gadget, desc);
+  if (*ep) {
     /* Claim the endpoint */
-    ep->driver_data = vg;
+    (*ep)->driver_data = vg;
     rc = 0;
   } else {
     rc = -ENOTSUPP;
@@ -784,20 +784,20 @@ static int __init vg_bind(struct usb_gadget *gadget)
 	  DBG(vg, "Endpoint autoconfguration\n");
 	  usb_ep_autoconfig_reset(gadget);
 	  if ((rc = autoconfig_endpoint(vg,
-					vg->bulk_out,
+					&vg->bulk_out,
 					&fs_bulk_out_desc)) != 0) {
 	    ERROR(vg, "Bulk-out endpoint autoconfiguration failed\n");
 	  }
 	  if (rc == 0) {
 	    if ((rc = autoconfig_endpoint(vg,
-					  vg->bulk_in,
+					  &vg->bulk_in,
 					  &fs_bulk_in_desc)) != 0) {
 	      ERROR(vg, "Bulk-in endpoint autoconfiguration failed\n");
 	    }
 	  }
 	  if (rc == 0) {
 	    if ((rc = autoconfig_endpoint(vg,
-					  vg->bulk_status_in,
+					  &vg->bulk_status_in,
 					  &fs_bulk_status_in_desc)) != 0) {
 	      ERROR(vg, "Bulk-status-out endpoint autoconfiguration failed\n");
 	    }
