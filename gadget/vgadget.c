@@ -1575,19 +1575,23 @@ static int vg_main_thread(void *vg_)
 	vg->thread_ctl.thread_task = current;
 
 	/* Release all our userspace resources */
+	DBG(vg, "Daemonize the main thread\n");
 	daemonize("vgadget");
 
 	/* Arrange for userspace references to be interpreted as kernel
 	 * pointers.  That way we can pass a kernel pointer to a routine
 	 * that expects a __user pointer and it will work okay. */
+	DBG(vg, "Set up for kernel-space reference compatibility\n");
 	set_fs(get_ds());
 
 	/* Wait for the gadget registration to finish up */
+	DBG(vg, "Wait for the gadget registration to finish up\n");
 	wait_for_completion(&vg->thread_ctl.thread_notifier);
 
 	/* The main loop */
 	while (vg->state != VG_STATE_TERMINATED) {
 	  vg_set_state(vg, VG_STATE_INDLE);
+	  DBG(vg, "Put the main thread in a sleep\n");
 	  sleep_thread(vg);
 	  if (exception_in_progress(vg)) {
 	    handle_exception(vg);
@@ -1600,9 +1604,13 @@ static int vg_main_thread(void *vg_)
 	  }
 	}
 
+	VDBG(vg, "Exit off the main thread\n");
+
 	vg->thread_ctl.thread_task = NULL;
 
 	/* Let the unbind and cleanup routines know the thread has exited */
+	DBG(vg, "Let the unbind and cleanup routines know the thread "
+	        "has exited\n");
 	complete_and_exit(&vg->thread_ctl.thread_notifier, 0);
 }
 
