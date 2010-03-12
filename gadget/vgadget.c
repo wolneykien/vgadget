@@ -1260,12 +1260,18 @@ static void inline set_bulk_out_req_length(struct vg_dev *vg,
 		struct vg_buffhd *bh, unsigned int length)
 {
 	unsigned int	rem;
+	unsigned int    maxpacket;
 
 	bh->bulk_out_intended_length = length;
-	rem = length % vg->bulk_out_maxpacket;
+	if (vg->gadget->speed == USB_SPEED_HIGH) {
+	  maxpacket = hs_bulk_in_desc.wMaxPacketSize;
+	} else {
+	  maxpacket = fs_bulk_in_desc.wMaxPacketSize;
+	} // TODO: use queue related endpoint descriptors
+	rem = length % maxpacket;
 	if (rem > 0)
-		length += vg->bulk_out_maxpacket - rem;
-	bh->outreq->length = length;
+	  length += maxpacket - rem;
+	bh->req->length = length;
 }
 
 /* Initiates a bulk transfer */
