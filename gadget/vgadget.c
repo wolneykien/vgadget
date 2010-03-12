@@ -413,7 +413,7 @@ static int __init vg_init(void)
 	  MDBG("Register the gadget device driver\n");
 	  rc = usb_gadget_register_driver(&vg_driver);
 	  if (rc == 0) {
-	    set_bit(REGISTERED, &the_vg->atomic_bitflags);
+	    set_bit(REGISTERED, &the_vg->flags);
 	    /* Tell the thread to start working */
 	    MDBG("Tell the thread to start working\n");
 	    complete(&the_vg->thread_ctl.thread_notifier);
@@ -437,7 +437,7 @@ static void __exit vg_cleanup(void)
 	struct vg_dev	*vg = the_vg;
 
 	/* Unregister the driver iff the thread hasn't already done so */
-	if (test_and_clear_bit(REGISTERED, &vg->atomic_bitflags)) {
+	if (test_and_clear_bit(REGISTERED, &vg->flags)) {
 	  MDBG("Unregister the gadget device driver\n");
 	  usb_gadget_unregister_driver(&vg_driver);
 	}
@@ -725,7 +725,7 @@ static void vg_suspend(struct usb_gadget *gadget)
 	struct vg_dev *vg = get_gadget_data(gadget);
 
 	DBG(vg, "suspend\n");
-	set_bit(SUSPENDED, &vg->atomic_bitflags);
+	set_bit(SUSPENDED, &vg->flags);
 }
 
 /* Resets the device SUSPENDED flag */
@@ -734,7 +734,7 @@ static void vg_resume(struct usb_gadget *gadget)
 	struct vg_dev *vg = get_gadget_data(gadget);
 
 	DBG(vg, "resume\n");
-	clear_bit(SUSPENDED, &vg->atomic_bitflags);
+	clear_bit(SUSPENDED, &vg->flags);
 }
 
 
@@ -895,7 +895,7 @@ static void vg_unbind(struct usb_gadget *gadget)
 {
 	struct vg_dev *vg = get_gadget_data(gadget);
 
-	clear_bit(REGISTERED, &vg->atomic_bitflags);
+	clear_bit(REGISTERED, &vg->flags);
 
 	/* If the thread isn't already dead, tell it to exit now */
 	if (vg->state != VG_STATE_TERMINATED) {
@@ -1548,7 +1548,7 @@ static void handle_exception(struct vg_dev *vg)
 		 * bulk endpoint, clear the halt now.  (The SuperH UDC
 		 * requires this.) */
 		if (test_and_clear_bit(CLEAR_BULK_HALTS,
-				       &vg->atomic_bitflags)) {
+				       &vg->flags)) {
 		  DBG(vg, "Clear bulk halts\n");
 		  usb_ep_clear_halt(vg->bulk_out);
 		  usb_ep_clear_halt(vg->bulk_in);
