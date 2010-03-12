@@ -574,15 +574,15 @@ static void vg_free_buffers(struct vg_buffer_queue *bufq,
 {
   int i;
 
-  vg_free_requests(bufq, ep);
   MDBG("Free %d buffers for %s\n", VG_NUM_BUFFERS, ep->name);
   for (i = 0; i < VG_NUM_BUFFERS; ++i) {
     usb_ep_free_buffer(ep,
-		       bufq->buffhds[i].buf,
-		       &bufq->buffhds[i].dma,
+		       bufq->buffhds[i].req->buf,
+		       &bufq->buffhds[i].req->dma,
 		       VG_BUF_SIZE);
     bufq->buffhds[i].next = NULL;
   }
+  vg_free_requests(bufq, ep);
 }
 
 /* Cancels all the pending transfers */
