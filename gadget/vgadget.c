@@ -1279,7 +1279,7 @@ static void inline set_bulk_out_req_length(struct vg_dev *vg,
 }
 
 /* Initiates a bulk transfer */
-static void start_transfer(struct vg_dev *vg, struct usb_ep *ep,
+static int start_transfer(struct vg_dev *vg, struct usb_ep *ep,
 			   struct usb_request *req, volatile int *pbusy,
 			   volatile enum vg_buffer_state *state)
 {
@@ -1519,7 +1519,7 @@ static int do_set_config(struct vg_dev *vg, u8 new_config)
 }
 
 /* Handles an exception state of the gadget device */
-static void handle_exception(struct vg_dev *vg)
+static int handle_exception(struct vg_dev *vg)
 {
 	enum vg_state		old_state;
 	u8			new_config;
