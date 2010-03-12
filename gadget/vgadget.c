@@ -1475,7 +1475,7 @@ static int do_set_interface(struct vg_dev *vg, int altsetting)
 	  }
 	}
 
-	vg_set_state(vg, VG_STATE_RUNNUNG);
+	vg_set_state(vg, VG_STATE_RUNNING);
 
 	return rc;
 }
