@@ -1592,7 +1592,7 @@ static void handle_exception(struct vg_dev *vg)
 		  usb_ep_clear_halt(vg->bulk_status_in);
 		}
 
-		if (vg->ep0_req_tag == exception_req_tag) {
+		if (vg->req_tag == exception_req_tag) {
 		  DBG(vg, "Enqueue to ep0 to c omplete the status stage\n");
 		  ep0_queue(vg);	// Complete the status stage
 		}
@@ -1600,7 +1600,7 @@ static void handle_exception(struct vg_dev *vg)
 
 	case VG_STATE_INTERFACE_CHANGE:
 		rc = do_set_interface(vg, 0);
-		if (vg->ep0_req_tag != exception_req_tag)
+		if (vg->req_tag != exception_req_tag)
 		  break;
 		if (rc != 0)			// STALL on errors
 		  vg_set_halt(vg, vg->ep0);
@@ -1610,7 +1610,7 @@ static void handle_exception(struct vg_dev *vg)
 
 	case VG_STATE_CONFIG_CHANGE:
 	  rc = do_set_config(vg, new_config);
-	  if (vg->ep0_req_tag != exception_req_tag)
+	  if (vg->req_tag != exception_req_tag)
 	    break;
 	  if (rc != 0)			// STALL on errors
 	    vg_set_halt(vg, vg->ep0);
