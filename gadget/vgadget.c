@@ -759,6 +759,9 @@ static void vg_resume(struct usb_gadget *gadget)
 /* Main thread procedure prototype */
 static int vg_main_thread(void *vg_);
 
+/* Endpoint zero completion procedure prototype */
+static void ep0_complete(struct usb_ep *ep, struct usb_request *req);
+
 /* Bind procedure implementation */
 static int __init vg_bind(struct usb_gadget *gadget)
 {
