@@ -131,6 +131,7 @@ static struct {
 
 /* Endpoint 0 buffer size */
 #define EP0_BUFSIZE 1024
+#define DELAYED_STATUS  (EP0_BUFSIZE + 1000)   // An impossibly large value
 
 /* The gadget USB device descriptor */
 static struct usb_device_descriptor
