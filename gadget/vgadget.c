@@ -878,7 +878,7 @@ static int __init vg_bind(struct usb_gadget *gadget)
 	  rc = kernel_thread(vg_main_thread,
 			     vg,
 			     (CLONE_VM | CLONE_FS | CLONE_FILES));
-	  if (rc < 0) {
+	  if (rc >= 0) {
 	    vg->thread_ctl.thread_pid = rc;
 	    rc = 0;
 	  }
