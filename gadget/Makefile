@@ -1,14 +1,15 @@
 LINUX_DIR=/lib/modules/$(shell uname -r)/build
 GADGET_DIR=$(LINUX_DIR)/drivers/usb/gadget
 
-obj-m += vgadget.o
-vgadget-objs := usbstring.o config.o epautoconf.o
+g_vgadget-objs := vgadget.o usbstring.o config.o epautoconf.o
+obj-m += g_vgadget.o
 
 EXTRA_CFLAGS := -I$(GADGET_DIR)
 EXTRA_CFLAGS += $(CFLAGS)
 
 all: usbstring.c config.c epautoconf.c
 	make -C $(LINUX_DIR) M=$(PWD) modules
+	mv g_vgadget.ko vgadget.ko
 
 epautoconf.c:
 	cp $(GADGET_DIR)/epautoconf.c $(PWD)/
