@@ -651,24 +651,15 @@ static void wakeup_thread(struct vg_dev *vg)
 /* Passes the thread to the sleeep state */
 static int sleep_thread(struct vg_dev *vg)
 {
-	int rc;
+	int	rc;
 
 	/* Wait until a signal arrives or we are woken up */
-	for (;;) {
-		try_to_freeze();
-		set_current_state(TASK_INTERRUPTIBLE);
-		if (signal_pending(current)) {
-			rc = -EINTR;
-			break;
-		}
-		if (vg->thread_ctl.thread_wakeup_needed)
-			break;
-		schedule();
-	}
-	__set_current_state(TASK_RUNNING);
+	rc = wait_event_interruptible(vg->thread_ctl.thread_wqh,
+				      vg->thread_ctl.thread_wakeup_needed);
 	vg->thread_ctl.thread_wakeup_needed = 0;
-
-	return rc;
+	if (current->flags & PF_FREEZE)
+		refrigerator(PF_FREEZE);
+	return (rc ? -EINTR : 0);
 }
 
 
