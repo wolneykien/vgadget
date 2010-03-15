@@ -9,7 +9,6 @@ EXTRA_CFLAGS += $(CFLAGS)
 
 all: usbstring.c config.c epautoconf.c
 	make -C $(LINUX_DIR) M=$(PWD) modules
-	mv g_vgadget.ko vgadget.ko
 
 epautoconf.c:
 	cp $(GADGET_DIR)/epautoconf.c $(PWD)/
