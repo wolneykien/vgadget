@@ -4,8 +4,8 @@ GADGET_DIR=$(LINUX_DIR)/drivers/usb/gadget
 g_vgadget-objs := vgadget.o usbstring.o config.o epautoconf.o
 obj-m += g_vgadget.o
 
-EXTRA_CFLAGS := -I$(GADGET_DIR)
-EXTRA_CFLAGS += $(CFLAGS)
+EXTRA_CFLAGS += -I$(GADGET_DIR)
+EXTRA_CFLAGS += $(OTHER_CFLAGS)
 
 all: usbstring.c config.c epautoconf.c
 	make -C $(LINUX_DIR) M=$(PWD) modules
