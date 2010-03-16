@@ -1390,7 +1390,7 @@ static int do_set_interface(struct vg_dev *vg, int altsetting)
 	  return rc;
 	}
 
-	DBG(vg, "Set interface number %d\n", altsetting);
+	DBG(vg, "Setup the interface number %d\n", altsetting);
 
 	/* Enable the endpoints */
 #ifdef CONFIG_USB_GADGET_DUALSPEED
@@ -1474,6 +1474,7 @@ static int do_set_config(struct vg_dev *vg, u8 new_config)
 
 	/* Enable the interface */
 	if (new_config > 0) {
+	  DBG(vg, "Setup the configuration number %d\n", new_config);
 		vg->config = new_config;
 		DBG(vg, "Enable the interface\n");
 		if ((rc = do_set_interface(vg, 0)) != 0) {
@@ -1588,6 +1589,7 @@ static int handle_exception(struct vg_dev *vg)
 		break;
 
 	case VG_STATE_CONFIG_CHANGE:
+	  DBG(vg, "Set new configuration %d\n", new_config);
 	  rc = do_set_config(vg, new_config);
 	  if (vg->req_tag != exception_req_tag)
 	    break;
@@ -1598,11 +1600,13 @@ static int handle_exception(struct vg_dev *vg)
 	  break;
 
 	case VG_STATE_DISCONNECT:
+	  DBG(vg, "Reset configuration on disconnect\n");
 	  do_set_config(vg, -1);		// Unconfigured state
 	  break;
 
 	case VG_STATE_EXIT:
 	case VG_STATE_TERMINATED:
+	  DBG(vg, "Reset configuration on exit/termination\n");
 	  do_set_config(vg, -1);	        // Free resources
 	  vg_set_state(vg, VG_STATE_TERMINATED);	// Stop the thread
 	  break;
