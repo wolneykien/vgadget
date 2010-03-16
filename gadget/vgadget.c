@@ -797,12 +797,12 @@ static int __init vg_bind(struct usb_gadget *gadget)
 	  rc = -ENOMEM;
 	  vg->ep0_req = usb_ep_alloc_request(vg->ep0, GFP_KERNEL);
 	  if (vg->ep0_req) {
-	    vg->ep0_req->buf =
-	      usb_ep_alloc_buffer(vg->ep0, EP0_BUFSIZE,
-				  &vg->ep0_req->dma, GFP_KERNEL);
-	    if (vg->ep0_req->buf) {
+	    rc = vg_allocate_request_buffer(vg->ep0,
+					    vg->ep0_req,
+					    EP0_BUFSIZE,
+					    GFP_KERNEL);
+	    if (rc == 0) {
 	      vg->ep0_req->complete = ep0_complete;
-	      rc = 0;
 	    } else {
 	      ERROR(vg, "Unable to allocate a buffer for endpoint 0\n");
 	    }
@@ -868,8 +868,7 @@ static void vg_unbind(struct usb_gadget *gadget)
 	if (vg->ep0_req) {
 	  if (vg->ep0_req->buf) {
 	    DBG(vg, "Free ep 0 buffer\n");
-	    usb_ep_free_buffer(vg->ep0, vg->ep0_req->buf,
-			       vg->ep0_req->dma, EP0_BUFSIZE);
+	    vg_free_request_buffer(vg->ep0, vg->ep0_req, EP0_BUFSIZE);
 	  }
 	  DBG(vg, "Free ep 0 request\n");
 	  usb_ep_free_request(vg->ep0, vg->ep0_req);
