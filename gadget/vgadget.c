@@ -505,6 +505,7 @@ static void vg_init_requests(struct vg_buffer_queue *bufq)
   MDBG("Initialize queue of %d elements\n", VG_NUM_BUFFERS);
   for (i = 0; i < VG_NUM_BUFFERS; i++) {
     bufq->buffhds[i].req = NULL;
+    bufq->buffhds[i].state = BUF_STATE_EMPTY;
   }
 }
 
@@ -521,7 +522,7 @@ static int vg_allocate_requests(struct vg_buffer_queue *bufq,
       MERROR("Request already allocated\n");
       continue;
     }
-    bufq->buffhds[i].req_busy = 0;
+    bufq->buffhds[i].state = BUF_STATE_EMPTY;
     if ((bufq->buffhds[i].req =
 	 usb_ep_alloc_request(ep, GFP_ATOMIC)) != NULL) {
       if ((i + 1) < VG_NUM_BUFFERS) {
@@ -572,7 +573,7 @@ static void vg_dequeue_all(struct vg_buffer_queue *bufq,
   int i;
 
   for (i = 0; i < VG_NUM_BUFFERS; i++) {
-    if (bufq->buffhds[i].req_busy) {
+    if (bufq->buffhds[i].state == BUF_STATE_BUSY) {
       MDBG("Dequeue a request number %d for %s\n", i, ep->name);
       usb_ep_dequeue(ep, bufq->buffhds[i].req);
     }
@@ -580,12 +581,14 @@ static void vg_dequeue_all(struct vg_buffer_queue *bufq,
 }
 
 /* Indicates are all transfers are idle */
-static int vg_no_transfers(struct vg_buffer_queue *bufq)
+static int vg_no_transfers(struct vg_buffer_queue *bufq,
+			   struct usb_ep *ep)
 {
   int i;
 
   for (i = 0; i < VG_NUM_BUFFERS; i++) {
-    if (bufq->buffhds[i].req_busy) {
+    if (bufq->buffhds[i].state == BUF_STATE_BUSY) {
+      MDBG("Request #%d of endpoint %s is busy\n", i, ep->name);
       return 0;
     }
   }
@@ -1218,7 +1221,6 @@ static void bulk_complete(struct usb_ep *ep, struct usb_request *req)
 
 	/* Hold the lock while we update the request and buffer states */
 	spin_lock(&vg->lock);
-	bh->req_busy = 0;
 	bh->state = BUF_STATE_EMPTY; // TODO: STATE_FULL
 	spin_unlock(&vg->lock);
 	wakeup_thread(vg); // TODO: submit next buffer?
@@ -1508,9 +1510,10 @@ static int handle_exception(struct vg_dev *vg)
 	vg_dequeue_all(&vg->status_in_bufq, vg->bulk_status_in);
 
 	/* Wait until everything is idle */
-	while (!vg_no_transfers(&vg->out_bufq)
-	       || !vg_no_transfers(&vg->in_bufq)
-	       || !vg_no_transfers(&vg->status_in_bufq)) {
+	while (!vg_no_transfers(&vg->out_bufq, vg->bulk_out)
+	       || !vg_no_transfers(&vg->in_bufq, vg->bulk_in)
+	       || !vg_no_transfers(&vg->status_in_bufq, vg->bulk_status_in))
+	{
 	  DBG(vg, "Wait until everything is idle\n");
 	  if ((rc = sleep_thread(vg)) != 0) {
 	    WARN(vg, "Interrupted while handle the exception\n");

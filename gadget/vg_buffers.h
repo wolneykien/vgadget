@@ -45,7 +45,6 @@ struct vg_buffhd {
 	struct vg_buffhd		*next;
 	unsigned int			bulk_out_intended_length;
 	struct usb_request		*req;
-	volatile int			req_busy;
 };
 
 /* A buffer queue structure */
