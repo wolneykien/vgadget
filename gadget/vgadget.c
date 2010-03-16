@@ -417,7 +417,6 @@ static void __exit vg_cleanup(void)
 	}
 
 	/* Wait for the thread to finish up */
-	MDBG("Wake up the main thread\n");
 	wakeup_thread(vg);
 	MDBG("Wait for the thread to finish up\n");
 	wait_for_completion(&vg->thread_ctl.thread_notifier);
@@ -641,6 +640,7 @@ static int __init autoconfig_endpoint(struct vg_dev *vg,
 static void wakeup_thread(struct vg_dev *vg)
 {
 	/* Tell the main thread that something has happened */
+  	MDBG("Wake up the main thread\n");
 	vg->thread_ctl.thread_wakeup_needed = 1;
 	wake_up_all(&vg->thread_ctl.thread_wqh);
 }
@@ -696,6 +696,8 @@ static void raise_exception(struct vg_dev *vg, enum vg_state new_state)
 		vg->state = new_state;
 		if (vg->thread_ctl.thread_task) {
 		  wakeup_thread(vg);
+		} else {
+		  DBG(vg, "No thread task -- do not wakeup\n");
 		}
 	}
 	spin_unlock_irqrestore(&vg->lock, flags);
