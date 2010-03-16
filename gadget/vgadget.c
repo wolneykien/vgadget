@@ -18,14 +18,7 @@
  * If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <linux/config.h>
-
-#include <asm/system.h>
-#include <asm/uaccess.h>
-
-#include <linux/bitops.h>
 #include <linux/blkdev.h>
-#include <linux/compiler.h>
 #include <linux/completion.h>
 #include <linux/dcache.h>
 #include <linux/delay.h>
@@ -33,25 +26,18 @@
 #include <linux/fcntl.h>
 #include <linux/file.h>
 #include <linux/fs.h>
-#include <linux/init.h>
-#include <linux/kernel.h>
+#include <linux/kref.h>
+#include <linux/kthread.h>
 #include <linux/limits.h>
-#include <linux/list.h>
-#include <linux/module.h>
-#include <linux/moduleparam.h>
-#include <linux/pagemap.h>
 #include <linux/rwsem.h>
-#include <linux/sched.h>
-#include <linux/signal.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/string.h>
-#include <linux/suspend.h>
+#include <linux/freezer.h>
 #include <linux/utsname.h>
-#include <linux/wait.h>
 
-#include <linux/usb_ch9.h>
-#include <linux/usb_gadget.h>
+#include <linux/usb/ch9.h>
+#include <linux/usb/gadget.h>
 
 /*
  * Local inclusions
