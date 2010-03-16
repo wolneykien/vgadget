@@ -27,7 +27,6 @@
 
 /* A thread control structure */
 struct vg_thread_ctl {
-	wait_queue_head_t	thread_wqh;
 	int			thread_wakeup_needed;
 	struct completion	thread_notifier;
 	int			thread_pid;

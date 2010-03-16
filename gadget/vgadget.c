@@ -445,7 +445,6 @@ static int __init vg_alloc(struct vg_dev **vg)
 	  spin_lock_init(&(*vg)->lock);
 	  init_rwsem(&(*vg)->filesem);
 	  MDBG("Allocate and init the gadget device thread wait queue\n");
-	  init_waitqueue_head(&(*vg)->thread_ctl.thread_wqh);
 	  init_completion(&(*vg)->thread_ctl.thread_notifier);
 	  rc = 0;
 	} else {
@@ -640,9 +639,11 @@ static int __init autoconfig_endpoint(struct vg_dev *vg,
 static void wakeup_thread(struct vg_dev *vg)
 {
 	/* Tell the main thread that something has happened */
-  	MDBG("Wake up the main thread\n");
-	vg->thread_ctl.thread_wakeup_needed = 1;
-	wake_up_all(&vg->thread_ctl.thread_wqh);
+        if (vg->thread_ctl.thread_task) {
+	  MDBG("Wake up the main thread\n");
+	  vg->thread_ctl.thread_wakeup_needed = 1;
+	  wake_up_process(vg->thread_ctl.thread_task);
+	}
 }
 
 /* Passes the thread to the sleeep state */
