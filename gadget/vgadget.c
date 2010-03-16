@@ -887,6 +887,7 @@ static void vg_unbind(struct usb_gadget *gadget)
 	if (vg->state != VG_STATE_TERMINATED) {
 	  DBG(vg, "Tell the main thread to exit and wait for it\n");
 		raise_exception(vg, VG_STATE_EXIT);
+		DBG(vg, "Wait for the thread task completion\n");
 		wait_for_completion(&vg->thread_ctl.thread_notifier);
 
 		/* The cleanup routine waits for this completion also */
