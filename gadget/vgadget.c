@@ -498,12 +498,15 @@ static void vg_free_request_buffer(struct usb_ep *ep,
 }
 
 /* Initializes the queue pointers */
-static void vg_init_requests(struct vg_buffer_queue *bufq)
+static void vg_init_requests(struct vg_buffer_queue *bufq,
+			     struct usb_ep *ep)
 {
   int i;
 
-  MDBG("Initialize queue of %d elements\n", VG_NUM_BUFFERS);
   for (i = 0; i < VG_NUM_BUFFERS; i++) {
+    MDBG("Initialize request buffer %d for endpoint %s\n",
+	 VG_NUM_BUFFERS,
+	 ep->name);
     bufq->buffhds[i].req = NULL;
     bufq->buffhds[i].state = BUF_STATE_EMPTY;
   }
@@ -516,12 +519,14 @@ static int vg_allocate_requests(struct vg_buffer_queue *bufq,
   int i;
   int rc = 0;
 
-  MDBG("Allocate %d requests for %s\n", VG_NUM_BUFFERS, ep->name);
   for (i = 0; rc == 0 && i < VG_NUM_BUFFERS; i++) {
     if (bufq->buffhds[i].req != NULL) {
       MERROR("Request already allocated\n");
       continue;
     }
+    MDBG("Allocate request %d for endpoint %s\n",
+	 VG_NUM_BUFFERS,
+	 ep->name);
     bufq->buffhds[i].state = BUF_STATE_EMPTY;
     if ((bufq->buffhds[i].req =
 	 usb_ep_alloc_request(ep, GFP_ATOMIC)) != NULL) {
@@ -555,9 +560,11 @@ static void vg_free_requests(struct vg_buffer_queue *bufq,
 {
   int i;
 
-  MDBG("Free %d requests for %s\n", VG_NUM_BUFFERS, ep->name);
   for (i = 0; i < VG_NUM_BUFFERS; i++) {
     if (bufq->buffhds[i].req) {
+      MDBG("Free request %d for endpoint %s\n",
+	   VG_NUM_BUFFERS,
+	   ep->name);
       vg_free_request_buffer(ep, bufq->buffhds[i].req, VG_BUF_SIZE);
       usb_ep_free_request(ep, bufq->buffhds[i].req);
       bufq->buffhds[i].req = NULL;
