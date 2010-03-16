@@ -497,6 +497,8 @@ static void vg_free_request_buffer(struct usb_ep *ep,
 /* Initializes the queue pointers */
 static void vg_init_requests(struct vg_buffer_queue *bufq)
 {
+  int i;
+
   MDBG("Initialize queue of %d elements\n", VG_NUM_BUFFERS);
   for (i = 0; i < VG_NUM_BUFFERS; ++i) {
     bufq->buffhds[i].req = NULL;
