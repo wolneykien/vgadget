@@ -653,14 +653,19 @@ static int sleep_thread(struct vg_dev *vg)
 	/* Wait until a signal arrives or we are woken up */
 	rc = 0;
 	for (;;) {
+	        DBG(vg, "Try to freeze the main thread\n");
 		try_to_freeze();
 		set_current_state(TASK_INTERRUPTIBLE);
 		if (signal_pending(current)) {
 			rc = -EINTR;
+			WARN(vg, "Interrupt signal\n");
 			break;
 		}
-		if (vg->thread_ctl.thread_wakeup_needed)
+		if (vg->thread_ctl.thread_wakeup_needed) {
+		        DBG(vg, "Woken up\n");
 			break;
+		}
+		DBG(vg, "Schedule the main thread\n");
 		schedule();
 	}
 	__set_current_state(TASK_RUNNING);
