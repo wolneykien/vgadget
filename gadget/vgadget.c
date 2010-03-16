@@ -402,6 +402,9 @@ static int __init vg_init(void)
 module_init(vg_init);
 
 
+/* Wake up the main thread prototype */
+static void wakeup_thread(struct vg_dev *vg);
+
 /* Unregisteres the module, frees up the allocated resources */
 static void __exit vg_cleanup(void)
 {
