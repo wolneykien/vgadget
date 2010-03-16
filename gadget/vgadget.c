@@ -441,9 +441,9 @@ static int __init vg_alloc(struct vg_dev **vg)
 	*vg = kmalloc(sizeof *vg, GFP_KERNEL);
 	if (vg) {
 	  memset(*vg, 0, sizeof *vg);
-	  MDBG("Allocate the gadget device locks\n");
-	  spin_lock_init(&(*vg)->lock);
-	  init_rwsem(&(*vg)->filesem);
+	  MDBG("Allocate locks and semaphores\n");
+	  rwlock_init(&(*vg)->state_lock);
+	  init_MUTEX(&(*vg)->exception_sem);
 	  MDBG("Allocate and init the gadget device thread wait queue\n");
 	  init_completion(&(*vg)->thread_ctl.thread_notifier);
 	  rc = 0;
@@ -616,13 +616,6 @@ static int __init check_parameters(struct vg_dev *vg)
   return 0;
 }
 
-/* Terminates and unbinds the gadget device */
-static void __init vg_terminate(struct vg_dev *vg)
-{
-  vg->state = VG_STATE_TERMINATED;	// The thread is dead
-  vg_unbind(vg->gadget);
-}
-
 /* Configure the endpoint automatically */
 static int __init autoconfig_endpoint(struct vg_dev *vg,
 				       struct usb_ep **ep,
@@ -691,21 +684,31 @@ static int sleep_thread(struct vg_dev *vg)
  * Implementation section. Exception handling
  */
 
+/* Returns the current state value */
+static enum vg_state inline vg_get_state(struct vg_dev *vg)
+{
+  enum vg_state state;
+
+  read_lock_irqsave(&vg->state_lock, vg->irq_state);
+  state = vg->state;
+  read_unlock_irqrestore(&vg->state_lock, vg->irq_state);
+
+  return state;
+}
+
 /* Indicates if an exception is in progress */
 static int inline exception_in_progress(struct vg_dev *vg)
 {
-	return (vg->state < VG_STATE_IDLE);
+  return (vg_get_state(vg) < VG_STATE_IDLE);
 }
 
 /* Raises the given exception (state) on the given device */
 static void raise_exception(struct vg_dev *vg, enum vg_state new_state)
 {
-	unsigned long flags = 0;
-
 	/* Do nothing if a higher-priority exception is already in progress.
 	 * If a lower-or-equal priority exception is in progress, preempt it
 	 * and notify the main thread by sending it a signal. */
-	spin_lock_irqsave(&vg->lock, flags);
+	write_lock_irqsave(&vg->state_lock, vg->irq_state);
 	if (vg->state >= new_state) {
 	  VDBG(vg, "Set the exception state %d\n", new_state);
 		vg->exception_req_tag = vg->req_tag;
@@ -716,23 +719,48 @@ static void raise_exception(struct vg_dev *vg, enum vg_state new_state)
 		  DBG(vg, "No thread task -- do not wakeup\n");
 		}
 	}
-	spin_unlock_irqrestore(&vg->lock, flags);
+	write_unlock_irqrestore(&vg->state_lock, vg->irq_state);
 }
 
 /* Sets the device state */
-static void vg_set_state(struct vg_dev *vg, enum vg_state new_state)
+static int vg_set_state(struct vg_dev *vg, enum vg_state new_state)
 {
-  spin_lock_irq(&vg->lock);
-  DBG(vg, "New device state: %d\n", new_state);
-  vg->state = new_state;
-  spin_unlock_irq(&vg->lock);
+  int rc;
+
+  write_lock_irqsave(&vg->state_lock, vg->irq_state);
+  if (!exception_in_progress(vg)) {
+    DBG(vg, "New device state: %d\n", new_state);
+    vg->state = new_state;
+    rc = 1;
+  } else {
+    rc = 0;
+  }
+  write_unlock_irqrestore(&vg->state_lock, vg->irq_state);
+
+  return rc;
+}
+
+/* Clears the exception state */
+static void vg_clear_exception(struct vg_dev *vg)
+{
+  write_lock_irqsave(&vg->state_lock, vg->irq_state);
+  DBG(vg, "Clear an exception state\n");
+  vg->state = VG_STATE_IDLE;
+  write_unlock_irqrestore(&vg->state_lock, vg->irq_state);
 }
 
 /* Indicates if a normal execution is in progress */
 static int inline is_running(struct vg_dev *vg)
 {
-	return (vg->state > VG_STATE_IDLE);
+  return (vg_get_state(vg) > VG_STATE_IDLE);
 }
+
+/* Indicates if a the execution has been terminated */
+static int inline is_terminated(struct vg_dev *vg)
+{
+  return (vg_get_state(vg) == VG_STATE_TERMINATED);
+}
+
 
 /*
  * Implementation section. The dagdet driver
@@ -900,7 +928,7 @@ static void vg_unbind(struct usb_gadget *gadget)
 	clear_bit(REGISTERED, &vg->flags);
 
 	/* If the thread isn't already dead, tell it to exit now */
-	if (vg->state != VG_STATE_TERMINATED) {
+	if (!is_terminated(vg)) {
 	  DBG(vg, "Tell the main thread to exit and wait for it\n");
 		raise_exception(vg, VG_STATE_EXIT);
 		DBG(vg, "Wait for the thread task completion\n");
@@ -1227,9 +1255,8 @@ static void bulk_complete(struct usb_ep *ep, struct usb_request *req)
 		usb_ep_fifo_flush(ep);
 
 	/* Hold the lock while we update the request and buffer states */
-	spin_lock(&vg->lock);
+	// TODO: lock ?
 	bh->state = BUF_STATE_EMPTY; // TODO: STATE_FULL
-	spin_unlock(&vg->lock);
 	wakeup_thread(vg); // TODO: submit next buffer?
 }
 
@@ -1453,7 +1480,7 @@ static int do_set_interface(struct vg_dev *vg, int altsetting)
 	  }
 	}
 
-	vg_set_state(vg, VG_STATE_RUNNING);
+	vg_set_state(vg, VG_STATE_IDLE);
 
 	return rc;
 }
@@ -1508,8 +1535,8 @@ static int handle_exception(struct vg_dev *vg)
 	if (!exception_in_progress(vg)) {
 	  return 0;
 	}
-
-	VDBG(vg, "Handle the exception state %d\n", vg->state);
+	
+	VDBG(vg, "Handle the exception state %d\n", vg_get_state(vg));
 
 	/* Cancel all the pending transfers */
 	DBG(vg, "Cancell all the pending transfers\n");
@@ -1543,7 +1570,9 @@ static int handle_exception(struct vg_dev *vg)
 
 	exception_req_tag = vg->exception_req_tag;
 	new_config = vg->new_config;
-	old_state = vg->state;
+	old_state = vg_get_state(vg);
+
+	vg_clear_exception(vg);
 
 	if (old_state == VG_STATE_ABORT_BULK_OUT) {
 	  vg_set_state(vg, VG_STATE_STATUS_PHASE);
@@ -1637,12 +1666,19 @@ static int vg_main_thread(void *vg_)
 	wait_for_completion(&vg->thread_ctl.thread_notifier);
 
 	/* The main loop */
-	while (vg->state != VG_STATE_TERMINATED) {
-	  vg_set_state(vg, VG_STATE_IDLE);
-	  DBG(vg, "Put the main thread in a sleep\n");
-	  sleep_thread(vg);
+	while (!is_terminated(vg)) {
+	  if (vg_set_state(vg, VG_STATE_IDLE)) {
+	    DBG(vg, "Put the main thread in a sleep\n");
+	    sleep_thread(vg);
+	  }
 	  if (exception_in_progress(vg)) {
-	    handle_exception(vg);
+	    if (!down_interruptible(&vg->exception_sem)) {
+	      handle_exception(vg);
+	      up(&vg->exception_sem);
+	    } else {
+	      WARN(vg, "Exception handler interrupted\n");
+	      vg_set_state(vg, VG_STATE_TERMINATED);
+	    }
 	    continue;
 	  }
 	  vg_set_state(vg, VG_STATE_RUNNING);

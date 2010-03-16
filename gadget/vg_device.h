@@ -52,10 +52,6 @@ enum vg_state {
 
 /* A gadget device structure */
 struct vg_dev {
-        /* Locks and semaphores */
-	spinlock_t		lock;
-	struct rw_semaphore	filesem;
-
         /* Low-level device link */
 	struct usb_gadget	*gadget;
 
@@ -66,6 +62,9 @@ struct vg_dev {
 	volatile unsigned int	req_tag;
 	unsigned int		exception_req_tag;
 	enum vg_state		state;
+       	rwlock_t		state_lock;
+        unsigned long           irq_state;
+        struct semaphore        exception_sem;
 	unsigned long		flags;
 
         /* Endpoints */
