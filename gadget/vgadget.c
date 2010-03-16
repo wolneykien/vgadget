@@ -864,9 +864,9 @@ static int __init vg_bind(struct usb_gadget *gadget)
 
 	/* Initialize the queues */
 	DBG(vg, "Initialize the queues\n");
-	vg_init_requests(&vg->out_bufq);
-	vg_init_requests(&vg->in_bufq);
-	vg_init_requests(&vg->status_in_bufq);
+	vg_init_requests(&vg->out_bufq, vg->bulk_out);
+	vg_init_requests(&vg->in_bufq, vg->bulk_in);
+	vg_init_requests(&vg->status_in_bufq, vg->bulk_status_in);
 
 	if (rc == 0) {
 	  /* Setup the main thread */
