@@ -1466,7 +1466,7 @@ static int do_set_config(struct vg_dev *vg, u8 new_config)
 	}
 
 	/* Enable the interface */
-	if (new_config != 0) {
+	if (new_config > 0) {
 		vg->config = new_config;
 		DBG(vg, "Enable the interface\n");
 		if ((rc = do_set_interface(vg, 0)) != 0) {
