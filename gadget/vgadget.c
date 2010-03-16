@@ -654,6 +654,7 @@ static int sleep_thread(struct vg_dev *vg)
 	int rc;
 
 	/* Wait until a signal arrives or we are woken up */
+	rc = 0;
 	for (;;) {
 		try_to_freeze();
 		set_current_state(TASK_INTERRUPTIBLE);
