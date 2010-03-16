@@ -414,6 +414,8 @@ static void __exit vg_cleanup(void)
 	}
 
 	/* Wait for the thread to finish up */
+	MDBG("Wake up the main thread\n");
+	wakeup_thread(vg);
 	MDBG("Wait for the thread to finish up\n");
 	wait_for_completion(&vg->thread_ctl.thread_notifier);
 
