@@ -494,6 +494,15 @@ static void vg_free_request_buffer(struct usb_ep *ep,
   req->buf = NULL;
 }
 
+/* Initializes the queue pointers */
+static void vg_init_requests(struct vg_buffer_queue *bufq)
+{
+  MDBG("Initialize queue of %d elements\n", VG_NUM_BUFFERS);
+  for (i = 0; i < VG_NUM_BUFFERS; ++i) {
+    bufq->buffhds[i].req = NULL;
+  }
+}
+
 /* Allocates a buffer queue */
 static int vg_allocate_requests(struct vg_buffer_queue *bufq,
 				struct usb_ep *ep)
@@ -515,6 +524,7 @@ static int vg_allocate_requests(struct vg_buffer_queue *bufq,
       } else {
 	bufq->buffhds[i].next = &bufq->buffhds[0];
       }
+      bufq->buffhds[i].req->buf = NULL;
       rc = vg_allocate_request_buffer(ep,
 				      bufq->buffhds[i].req,
 				      VG_BUF_SIZE,
@@ -826,6 +836,12 @@ static int __init vg_bind(struct usb_gadget *gadget)
 	  DBG(vg, "Claim gadget as self-powered\n");
 	  usb_gadget_set_selfpowered(gadget);
 	}
+
+	/* Initialize the queues */
+	DBG(vg, "Initialize the queues\n");
+	vg_init_requests(&vg->out_bufq);
+	vg_init_requests(&vg->in_bufq);
+	vg_init_requests(&vg->status_in_bufq);
 
 	if (rc == 0) {
 	  /* Setup the main thread */
