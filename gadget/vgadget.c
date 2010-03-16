@@ -1459,7 +1459,7 @@ static int do_set_interface(struct vg_dev *vg, int altsetting)
 }
 
 /* Change the operational configuration */
-static int do_set_config(struct vg_dev *vg, u8 new_config)
+static int do_set_config(struct vg_dev *vg, int new_config)
 {
 	int	rc = 0;
 
