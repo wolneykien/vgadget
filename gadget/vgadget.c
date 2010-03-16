@@ -416,6 +416,9 @@ static int __init vg_init(void)
 module_init(vg_init);
 
 
+/* Wake up the main thread prototype */
+static void wakeup_thread(struct vg_dev *vg);
+
 /* Unregisteres the module, frees up the allocated resources */
 static void __exit vg_cleanup(void)
 {
@@ -428,6 +431,8 @@ static void __exit vg_cleanup(void)
 	}
 
 	/* Wait for the thread to finish up */
+	MDBG("Wake up the main thread\n");
+	wakeup_thread(vg);
 	MDBG("Wait for the thread to finish up\n");
 	wait_for_completion(&vg->thread_ctl.thread_notifier);
 
@@ -483,6 +488,11 @@ static int vg_allocate_request_buffer(struct usb_ep *ep,
 {
   int rc;
 
+  if (req->buf != NULL) {
+    MERROR("Buffer already allocated\n");
+    return -EINVAL;
+  }
+
   req->buf = kmalloc(len, flags);
   if (req->buf) {
     rc = 0;
@@ -500,6 +510,18 @@ static void vg_free_request_buffer(struct usb_ep *ep,
 				   unsigned len)
 {
   kfree(req->buf);
+  req->buf = NULL;
+}
+
+/* Initializes the queue pointers */
+static void vg_init_requests(struct vg_buffer_queue *bufq)
+{
+  int i;
+
+  MDBG("Initialize queue of %d elements\n", VG_NUM_BUFFERS);
+  for (i = 0; i < VG_NUM_BUFFERS; ++i) {
+    bufq->buffhds[i].req = NULL;
+  }
 }
 
 /* Allocates a buffer queue */
@@ -511,6 +533,10 @@ static int vg_allocate_requests(struct vg_buffer_queue *bufq,
 
   MDBG("Allocate %d requests for %s\n", VG_NUM_BUFFERS, ep->name);
   for (i = 0; rc == 0 && i < VG_NUM_BUFFERS; ++i) {
+    if (bufq->buffhds[i].req != NULL) {
+      MERROR("Request already allocated\n");
+      continue;
+    }
     bufq->buffhds[i].req_busy = 0;
     if ((bufq->buffhds[i].req =
 	 usb_ep_alloc_request(ep, GFP_ATOMIC)) != NULL) {
@@ -519,6 +545,7 @@ static int vg_allocate_requests(struct vg_buffer_queue *bufq,
       } else {
 	bufq->buffhds[i].next = &bufq->buffhds[0];
       }
+      bufq->buffhds[i].req->buf = NULL;
       rc = vg_allocate_request_buffer(ep,
 				      bufq->buffhds[i].req,
 				      VG_BUF_SIZE,
@@ -811,12 +838,12 @@ static int __init vg_bind(struct usb_gadget *gadget)
 	  rc = -ENOMEM;
 	  vg->ep0_req = usb_ep_alloc_request(vg->ep0, GFP_KERNEL);
 	  if (vg->ep0_req) {
-	    vg->ep0_req->buf =
-	      usb_ep_alloc_buffer(vg->ep0, EP0_BUFSIZE,
-				  &vg->ep0_req->dma, GFP_KERNEL);
-	    if (vg->ep0_req->buf) {
+	    rc = vg_allocate_request_buffer(vg->ep0,
+					    vg->ep0_req,
+					    EP0_BUFSIZE,
+					    GFP_KERNEL);
+	    if (rc == 0) {
 	      vg->ep0_req->complete = ep0_complete;
-	      rc = 0;
 	    } else {
 	      ERROR(vg, "Unable to allocate a buffer for endpoint 0\n");
 	    }
@@ -830,6 +857,12 @@ static int __init vg_bind(struct usb_gadget *gadget)
 	  DBG(vg, "Claim gadget as self-powered\n");
 	  usb_gadget_set_selfpowered(gadget);
 	}
+
+	/* Initialize the queues */
+	DBG(vg, "Initialize the queues\n");
+	vg_init_requests(&vg->out_bufq);
+	vg_init_requests(&vg->in_bufq);
+	vg_init_requests(&vg->status_in_bufq);
 
 	if (rc == 0) {
 	  /* Setup the main thread */
@@ -874,16 +907,15 @@ static void vg_unbind(struct usb_gadget *gadget)
 
 	/* Free the data buffers */
 	DBG(vg, "Free data buffers\n");
-	vg_free_buffers(&vg->out_bufq, vg->bulk_out);
-	vg_free_buffers(&vg->in_bufq, vg->bulk_in);
-	vg_free_buffers(&vg->status_in_bufq, vg->bulk_status_in);
+	vg_free_requests(&vg->out_bufq, vg->bulk_out);
+	vg_free_requests(&vg->in_bufq, vg->bulk_in);
+	vg_free_requests(&vg->status_in_bufq, vg->bulk_status_in);
 
 	/* Free the request and a buffer for endpoint 0 */
 	if (vg->ep0_req) {
 	  if (vg->ep0_req->buf) {
 	    DBG(vg, "Free ep 0 buffer\n");
-	    usb_ep_free_buffer(vg->ep0, vg->ep0_req->buf,
-			       vg->ep0_req->dma, EP0_BUFSIZE);
+	    vg_free_request_buffer(vg->ep0, vg->ep0_req, EP0_BUFSIZE);
 	  }
 	  DBG(vg, "Free ep 0 request\n");
 	  usb_ep_free_request(vg->ep0, vg->ep0_req);
