@@ -475,7 +475,34 @@ static void vg_free(struct vg_dev *vg)
 /* Completion procedure prototype */
 static void bulk_complete(struct usb_ep *ep, struct usb_request *req);
 
-/* Allocates a buffer queue request objects */
+/* Allocates a buffer for an endpoint request */
+static int vg_allocate_request_buffer(struct usb_ep *ep,
+				      struct usb_request *req,
+				      unsigned len,
+				      gfp_t flags)
+{
+  int rc;
+
+  req->buf = kmalloc(len, flags);
+  if (req->buf) {
+    rc = 0;
+  } else {
+    MERROR("Unable to allocate a buffer for the %s endpoint\n", ep->name);
+    rc = -ENOMEM;
+  }
+
+  return rc;
+}
+
+/* Frees the buffer of an endpoint request */
+static void vg_free_request_buffer(struct usb_ep *ep,
+				   struct usb_request *req,
+				   unsigned len)
+{
+  kfree(req->buf);
+}
+
+/* Allocates a buffer queue */
 static int vg_allocate_requests(struct vg_buffer_queue *bufq,
 				struct usb_ep *ep)
 {
@@ -487,7 +514,15 @@ static int vg_allocate_requests(struct vg_buffer_queue *bufq,
     bufq->buffhds[i].req_busy = 0;
     if ((bufq->buffhds[i].req =
 	 usb_ep_alloc_request(ep, GFP_ATOMIC)) != NULL) {
-      rc = 0;
+      if ((i + 1) < VG_NUM_BUFFERS) {
+	bufq->buffhds[i].next = &bufq->buffhds[i + 1];
+      } else {
+	bufq->buffhds[i].next = &bufq->buffhds[0];
+      }
+      rc = vg_allocate_request_buffer(ep,
+				      bufq->buffhds[i].req,
+				      VG_BUF_SIZE,
+				      GFP_KERNEL);
     } else {
       MERROR("Can't allocate request for %s\n", ep->name);
       rc = -ENOMEM;
@@ -502,43 +537,7 @@ static int vg_allocate_requests(struct vg_buffer_queue *bufq,
   return rc;
 }
 
-/* Allocates a buffer queue */
-static int vg_allocate_buffers(struct vg_buffer_queue *bufq,
-			       struct usb_ep *ep)
-{
-  int i;
-  int rc = 0;
-
-  if ((rc = vg_allocate_requests(bufq, ep)) != 0) {
-    MERROR("Unable to allocate request objects\n");
-  }
-  
-  if (rc == 0) {
-    MDBG("Allocate %d buffers for %s\n", VG_NUM_BUFFERS, ep->name);
-    for (i = 0; rc == 0 && i < VG_NUM_BUFFERS; ++i) {
-      bufq->buffhds[i].req->buf =
-	usb_ep_alloc_buffer(ep,
-			    VG_BUF_SIZE,
-			    &bufq->buffhds[i].req->dma,
-			    GFP_KERNEL);
-      if (bufq->buffhds[i].req->buf) {
-	if ((i + 1) < VG_NUM_BUFFERS) {
-	  bufq->buffhds[i].next = &bufq->buffhds[i + 1];
-	} else {
-	  bufq->buffhds[i].next = NULL;
-	}
-	rc = 0;
-      } else {
-	rc = -ENOMEM;
-	MERROR("Unable to allocate buffer for %s\n", ep->name);
-      }
-    }
-  }
-
-  return rc;
-}
-
-/* Frees a buffer queue request objects */
+/* Frees a buffer queue */
 static void vg_free_requests(struct vg_buffer_queue *bufq,
 			     struct usb_ep *ep)
 {
@@ -547,27 +546,12 @@ static void vg_free_requests(struct vg_buffer_queue *bufq,
   MDBG("Free %d requests for %s\n", VG_NUM_BUFFERS, ep->name);
   for (i = 0; i < VG_NUM_BUFFERS; ++i) {
     if (bufq->buffhds[i].req) {
+      vg_free_request_buffer(ep, bufq->buffhds[i].req, VG_BUF_SIZE);
       usb_ep_free_request(ep, bufq->buffhds[i].req);
       bufq->buffhds[i].req = NULL;
+      bufq->buffhds[i].next = NULL;
     }
   }
-}
-
-/* Frees a buffer queue */
-static void vg_free_buffers(struct vg_buffer_queue *bufq,
-			    struct usb_ep *ep)
-{
-  int i;
-
-  MDBG("Free %d buffers for %s\n", VG_NUM_BUFFERS, ep->name);
-  for (i = 0; i < VG_NUM_BUFFERS; ++i) {
-    usb_ep_free_buffer(ep,
-		       bufq->buffhds[i].req->buf,
-		       bufq->buffhds[i].req->dma,
-		       VG_BUF_SIZE);
-    bufq->buffhds[i].next = NULL;
-  }
-  vg_free_requests(bufq, ep);
 }
 
 /* Cancels all the pending transfers */
@@ -838,32 +822,6 @@ static int __init vg_bind(struct usb_gadget *gadget)
 	    }
 	  } else {
 	    ERROR(vg, "Unable to allocate a request object for ep0\n");
-	  }
-	}
-
-	/* Allocate the data buffers */
-	if (rc == 0) {
-	  DBG(vg, "Allocate the data buffers\n");
-	  if (rc == 0) {
-	    if ((rc = vg_allocate_buffers(&vg->out_bufq,
-					  vg->bulk_out)) != 0) {
-	      ERROR(vg, "Unable to allocate buffers for the host-output "
-		        "queue\n");
-	    }
-	  }
-	  if (rc == 0) {
-	    if ((rc = vg_allocate_buffers(&vg->in_bufq,
-					  vg->bulk_in)) != 0) {
-	      ERROR(vg, "Unable to allocate buffers for the host-input"
-		        " queue\n");
-	    }
-	  }
-	  if (rc == 0) {
-	    if ((rc = vg_allocate_buffers(&vg->status_in_bufq,
-					  vg->bulk_status_in)) != 0) {
-	      ERROR(vg, "Unable to allocate buffer for the host-status-input "
-		    "queue\n");
-	    }
 	  }
 	}
 
