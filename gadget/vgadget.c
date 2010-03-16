@@ -860,9 +860,9 @@ static void vg_unbind(struct usb_gadget *gadget)
 
 	/* Free the data buffers */
 	DBG(vg, "Free data buffers\n");
-	vg_free_buffers(&vg->out_bufq, vg->bulk_out);
-	vg_free_buffers(&vg->in_bufq, vg->bulk_in);
-	vg_free_buffers(&vg->status_in_bufq, vg->bulk_status_in);
+	vg_free_requests(&vg->out_bufq, vg->bulk_out);
+	vg_free_requests(&vg->in_bufq, vg->bulk_in);
+	vg_free_requests(&vg->status_in_bufq, vg->bulk_status_in);
 
 	/* Free the request and a buffer for endpoint 0 */
 	if (vg->ep0_req) {
