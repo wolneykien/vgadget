@@ -431,7 +431,6 @@ static void __exit vg_cleanup(void)
 	}
 
 	/* Wait for the thread to finish up */
-	MDBG("Wake up the main thread\n");
 	wakeup_thread(vg);
 	MDBG("Wait for the thread to finish up\n");
 	wait_for_completion(&vg->thread_ctl.thread_notifier);
@@ -456,11 +455,10 @@ static int __init vg_alloc(struct vg_dev **vg)
 	*vg = kmalloc(sizeof *vg, GFP_KERNEL);
 	if (vg) {
 	  memset(*vg, 0, sizeof *vg);
-	  MDBG("Allocate the gadget device locks\n");
-	  spin_lock_init(&(*vg)->lock);
-	  init_rwsem(&(*vg)->filesem);
+	  MDBG("Allocate locks and semaphores\n");
+	  rwlock_init(&(*vg)->state_lock);
+	  init_MUTEX(&(*vg)->exception_sem);
 	  MDBG("Allocate and init the gadget device thread wait queue\n");
-	  init_waitqueue_head(&(*vg)->thread_ctl.thread_wqh);
 	  init_completion(&(*vg)->thread_ctl.thread_notifier);
 	  rc = 0;
 	} else {
@@ -514,13 +512,17 @@ static void vg_free_request_buffer(struct usb_ep *ep,
 }
 
 /* Initializes the queue pointers */
-static void vg_init_requests(struct vg_buffer_queue *bufq)
+static void vg_init_requests(struct vg_buffer_queue *bufq,
+			     struct usb_ep *ep)
 {
   int i;
 
-  MDBG("Initialize queue of %d elements\n", VG_NUM_BUFFERS);
-  for (i = 0; i < VG_NUM_BUFFERS; ++i) {
+  for (i = 0; i < VG_NUM_BUFFERS; i++) {
+    MDBG("Initialize request buffer %d for endpoint %s\n",
+	 VG_NUM_BUFFERS,
+	 ep->name);
     bufq->buffhds[i].req = NULL;
+    bufq->buffhds[i].state = BUF_STATE_EMPTY;
   }
 }
 
@@ -531,13 +533,15 @@ static int vg_allocate_requests(struct vg_buffer_queue *bufq,
   int i;
   int rc = 0;
 
-  MDBG("Allocate %d requests for %s\n", VG_NUM_BUFFERS, ep->name);
-  for (i = 0; rc == 0 && i < VG_NUM_BUFFERS; ++i) {
+  for (i = 0; rc == 0 && i < VG_NUM_BUFFERS; i++) {
     if (bufq->buffhds[i].req != NULL) {
       MERROR("Request already allocated\n");
       continue;
     }
-    bufq->buffhds[i].req_busy = 0;
+    MDBG("Allocate request %d for endpoint %s\n",
+	 VG_NUM_BUFFERS,
+	 ep->name);
+    bufq->buffhds[i].state = BUF_STATE_EMPTY;
     if ((bufq->buffhds[i].req =
 	 usb_ep_alloc_request(ep, GFP_ATOMIC)) != NULL) {
       if ((i + 1) < VG_NUM_BUFFERS) {
@@ -570,9 +574,11 @@ static void vg_free_requests(struct vg_buffer_queue *bufq,
 {
   int i;
 
-  MDBG("Free %d requests for %s\n", VG_NUM_BUFFERS, ep->name);
-  for (i = 0; i < VG_NUM_BUFFERS; ++i) {
+  for (i = 0; i < VG_NUM_BUFFERS; i++) {
     if (bufq->buffhds[i].req) {
+      MDBG("Free request %d for endpoint %s\n",
+	   VG_NUM_BUFFERS,
+	   ep->name);
       vg_free_request_buffer(ep, bufq->buffhds[i].req, VG_BUF_SIZE);
       usb_ep_free_request(ep, bufq->buffhds[i].req);
       bufq->buffhds[i].req = NULL;
@@ -587,8 +593,8 @@ static void vg_dequeue_all(struct vg_buffer_queue *bufq,
 {
   int i;
 
-  for (i = 0; i < VG_NUM_BUFFERS; ++i) {
-    if (bufq->buffhds[i].req_busy) {
+  for (i = 0; i < VG_NUM_BUFFERS; i++) {
+    if (bufq->buffhds[i].state == BUF_STATE_BUSY) {
       MDBG("Dequeue a request number %d for %s\n", i, ep->name);
       usb_ep_dequeue(ep, bufq->buffhds[i].req);
     }
@@ -596,12 +602,14 @@ static void vg_dequeue_all(struct vg_buffer_queue *bufq,
 }
 
 /* Indicates are all transfers are idle */
-static int vg_no_transfers(struct vg_buffer_queue *bufq)
+static int vg_no_transfers(struct vg_buffer_queue *bufq,
+			   struct usb_ep *ep)
 {
   int i;
 
-  for (i = 0; i < VG_NUM_BUFFERS; ++i) {
-    if (bufq->buffhds[i].req_busy) {
+  for (i = 0; i < VG_NUM_BUFFERS; i++) {
+    if (bufq->buffhds[i].state == BUF_STATE_BUSY) {
+      MDBG("Request #%d of endpoint %s is busy\n", i, ep->name);
       return 0;
     }
   }
@@ -620,13 +628,6 @@ static void vg_reset_queue(struct vg_buffer_queue *bufq)
 static int __init check_parameters(struct vg_dev *vg)
 {
   return 0;
-}
-
-/* Terminates and unbinds the gadget device */
-static void __init vg_terminate(struct vg_dev *vg)
-{
-  vg->state = VG_STATE_TERMINATED;	// The thread is dead
-  vg_unbind(vg->gadget);
 }
 
 /* Configure the endpoint automatically */
@@ -655,8 +656,11 @@ static int __init autoconfig_endpoint(struct vg_dev *vg,
 static void wakeup_thread(struct vg_dev *vg)
 {
 	/* Tell the main thread that something has happened */
-	vg->thread_ctl.thread_wakeup_needed = 1;
-	wake_up_all(&vg->thread_ctl.thread_wqh);
+        if (vg->thread_ctl.thread_task) {
+	  MDBG("Wake up the main thread\n");
+	  vg->thread_ctl.thread_wakeup_needed = 1;
+	  wake_up_process(vg->thread_ctl.thread_task);
+	}
 }
 
 /* Passes the thread to the sleeep state */
@@ -667,14 +671,19 @@ static int sleep_thread(struct vg_dev *vg)
 	/* Wait until a signal arrives or we are woken up */
 	rc = 0;
 	for (;;) {
+	        DBG(vg, "Try to freeze the main thread\n");
 		try_to_freeze();
 		set_current_state(TASK_INTERRUPTIBLE);
 		if (signal_pending(current)) {
 			rc = -EINTR;
+			WARN(vg, "Interrupt signal\n");
 			break;
 		}
-		if (vg->thread_ctl.thread_wakeup_needed)
+		if (vg->thread_ctl.thread_wakeup_needed) {
+		        DBG(vg, "Woken up\n");
 			break;
+		}
+		DBG(vg, "Schedule the main thread\n");
 		schedule();
 	}
 	__set_current_state(TASK_RUNNING);
@@ -689,46 +698,83 @@ static int sleep_thread(struct vg_dev *vg)
  * Implementation section. Exception handling
  */
 
+/* Returns the current state value */
+static enum vg_state inline vg_get_state(struct vg_dev *vg)
+{
+  enum vg_state state;
+
+  read_lock_irqsave(&vg->state_lock, vg->irq_state);
+  state = vg->state;
+  read_unlock_irqrestore(&vg->state_lock, vg->irq_state);
+
+  return state;
+}
+
 /* Indicates if an exception is in progress */
 static int inline exception_in_progress(struct vg_dev *vg)
 {
-	return (vg->state < VG_STATE_IDLE);
+  return (vg_get_state(vg) < VG_STATE_IDLE);
 }
 
 /* Raises the given exception (state) on the given device */
 static void raise_exception(struct vg_dev *vg, enum vg_state new_state)
 {
-	unsigned long flags = 0;
-
 	/* Do nothing if a higher-priority exception is already in progress.
 	 * If a lower-or-equal priority exception is in progress, preempt it
 	 * and notify the main thread by sending it a signal. */
-	spin_lock_irqsave(&vg->lock, flags);
+	write_lock_irqsave(&vg->state_lock, vg->irq_state);
 	if (vg->state >= new_state) {
 	  VDBG(vg, "Set the exception state %d\n", new_state);
 		vg->exception_req_tag = vg->req_tag;
 		vg->state = new_state;
 		if (vg->thread_ctl.thread_task) {
 		  wakeup_thread(vg);
+		} else {
+		  DBG(vg, "No thread task -- do not wakeup\n");
 		}
 	}
-	spin_unlock_irqrestore(&vg->lock, flags);
+	write_unlock_irqrestore(&vg->state_lock, vg->irq_state);
 }
 
 /* Sets the device state */
-static void vg_set_state(struct vg_dev *vg, enum vg_state new_state)
+static int vg_set_state(struct vg_dev *vg, enum vg_state new_state)
 {
-  spin_lock_irq(&vg->lock);
-  DBG(vg, "New device state: %d\n", new_state);
-  vg->state = new_state;
-  spin_unlock_irq(&vg->lock);
+  int rc;
+
+  write_lock_irqsave(&vg->state_lock, vg->irq_state);
+  if (!exception_in_progress(vg)) {
+    DBG(vg, "New device state: %d\n", new_state);
+    vg->state = new_state;
+    rc = 1;
+  } else {
+    rc = 0;
+  }
+  write_unlock_irqrestore(&vg->state_lock, vg->irq_state);
+
+  return rc;
+}
+
+/* Clears the exception state */
+static void vg_clear_exception(struct vg_dev *vg)
+{
+  write_lock_irqsave(&vg->state_lock, vg->irq_state);
+  DBG(vg, "Clear an exception state\n");
+  vg->state = VG_STATE_IDLE;
+  write_unlock_irqrestore(&vg->state_lock, vg->irq_state);
 }
 
 /* Indicates if a normal execution is in progress */
 static int inline is_running(struct vg_dev *vg)
 {
-	return (vg->state > VG_STATE_IDLE);
+  return (vg_get_state(vg) > VG_STATE_IDLE);
 }
+
+/* Indicates if a the execution has been terminated */
+static int inline is_terminated(struct vg_dev *vg)
+{
+  return (vg_get_state(vg) == VG_STATE_TERMINATED);
+}
+
 
 /*
  * Implementation section. The dagdet driver
@@ -860,9 +906,9 @@ static int __init vg_bind(struct usb_gadget *gadget)
 
 	/* Initialize the queues */
 	DBG(vg, "Initialize the queues\n");
-	vg_init_requests(&vg->out_bufq);
-	vg_init_requests(&vg->in_bufq);
-	vg_init_requests(&vg->status_in_bufq);
+	vg_init_requests(&vg->out_bufq, vg->bulk_out);
+	vg_init_requests(&vg->in_bufq, vg->bulk_in);
+	vg_init_requests(&vg->status_in_bufq, vg->bulk_status_in);
 
 	if (rc == 0) {
 	  /* Setup the main thread */
@@ -896,9 +942,10 @@ static void vg_unbind(struct usb_gadget *gadget)
 	clear_bit(REGISTERED, &vg->flags);
 
 	/* If the thread isn't already dead, tell it to exit now */
-	if (vg->state != VG_STATE_TERMINATED) {
+	if (!is_terminated(vg)) {
 	  DBG(vg, "Tell the main thread to exit and wait for it\n");
 		raise_exception(vg, VG_STATE_EXIT);
+		DBG(vg, "Wait for the thread task completion\n");
 		wait_for_completion(&vg->thread_ctl.thread_notifier);
 
 		/* The cleanup routine waits for this completion also */
@@ -1222,10 +1269,8 @@ static void bulk_complete(struct usb_ep *ep, struct usb_request *req)
 		usb_ep_fifo_flush(ep);
 
 	/* Hold the lock while we update the request and buffer states */
-	spin_lock(&vg->lock);
-	bh->req_busy = 0;
+	// TODO: lock ?
 	bh->state = BUF_STATE_EMPTY; // TODO: STATE_FULL
-	spin_unlock(&vg->lock);
 	wakeup_thread(vg); // TODO: submit next buffer?
 }
 
@@ -1386,7 +1431,7 @@ static int do_set_interface(struct vg_dev *vg, int altsetting)
 	  return rc;
 	}
 
-	DBG(vg, "Set interface number %d\n", altsetting);
+	DBG(vg, "Setup the interface number %d\n", altsetting);
 
 	/* Enable the endpoints */
 #ifdef CONFIG_USB_GADGET_DUALSPEED
@@ -1449,13 +1494,13 @@ static int do_set_interface(struct vg_dev *vg, int altsetting)
 	  }
 	}
 
-	vg_set_state(vg, VG_STATE_RUNNING);
+	vg_set_state(vg, VG_STATE_IDLE);
 
 	return rc;
 }
 
 /* Change the operational configuration */
-static int do_set_config(struct vg_dev *vg, u8 new_config)
+static int do_set_config(struct vg_dev *vg, int new_config)
 {
 	int	rc = 0;
 
@@ -1469,7 +1514,8 @@ static int do_set_config(struct vg_dev *vg, u8 new_config)
 	}
 
 	/* Enable the interface */
-	if (new_config != 0) {
+	if (new_config > 0) {
+	  DBG(vg, "Setup the configuration number %d\n", new_config);
 		vg->config = new_config;
 		DBG(vg, "Enable the interface\n");
 		if ((rc = do_set_interface(vg, 0)) != 0) {
@@ -1503,8 +1549,8 @@ static int handle_exception(struct vg_dev *vg)
 	if (!exception_in_progress(vg)) {
 	  return 0;
 	}
-
-	VDBG(vg, "Handle the exception state %d\n", vg->state);
+	
+	VDBG(vg, "Handle the exception state %d\n", vg_get_state(vg));
 
 	/* Cancel all the pending transfers */
 	DBG(vg, "Cancell all the pending transfers\n");
@@ -1513,9 +1559,10 @@ static int handle_exception(struct vg_dev *vg)
 	vg_dequeue_all(&vg->status_in_bufq, vg->bulk_status_in);
 
 	/* Wait until everything is idle */
-	while (!vg_no_transfers(&vg->out_bufq)
-	       || !vg_no_transfers(&vg->in_bufq)
-	       || !vg_no_transfers(&vg->status_in_bufq)) {
+	while (!vg_no_transfers(&vg->out_bufq, vg->bulk_out)
+	       || !vg_no_transfers(&vg->in_bufq, vg->bulk_in)
+	       || !vg_no_transfers(&vg->status_in_bufq, vg->bulk_status_in))
+	{
 	  DBG(vg, "Wait until everything is idle\n");
 	  if ((rc = sleep_thread(vg)) != 0) {
 	    WARN(vg, "Interrupted while handle the exception\n");
@@ -1537,7 +1584,9 @@ static int handle_exception(struct vg_dev *vg)
 
 	exception_req_tag = vg->exception_req_tag;
 	new_config = vg->new_config;
-	old_state = vg->state;
+	old_state = vg_get_state(vg);
+
+	vg_clear_exception(vg);
 
 	if (old_state == VG_STATE_ABORT_BULK_OUT) {
 	  vg_set_state(vg, VG_STATE_STATUS_PHASE);
@@ -1583,6 +1632,7 @@ static int handle_exception(struct vg_dev *vg)
 		break;
 
 	case VG_STATE_CONFIG_CHANGE:
+	  DBG(vg, "Set new configuration %d\n", new_config);
 	  rc = do_set_config(vg, new_config);
 	  if (vg->req_tag != exception_req_tag)
 	    break;
@@ -1593,11 +1643,13 @@ static int handle_exception(struct vg_dev *vg)
 	  break;
 
 	case VG_STATE_DISCONNECT:
+	  DBG(vg, "Reset configuration on disconnect\n");
 	  do_set_config(vg, -1);		// Unconfigured state
 	  break;
 
 	case VG_STATE_EXIT:
 	case VG_STATE_TERMINATED:
+	  DBG(vg, "Reset configuration on exit/termination\n");
 	  do_set_config(vg, -1);	        // Free resources
 	  vg_set_state(vg, VG_STATE_TERMINATED);	// Stop the thread
 	  break;
@@ -1628,12 +1680,19 @@ static int vg_main_thread(void *vg_)
 	wait_for_completion(&vg->thread_ctl.thread_notifier);
 
 	/* The main loop */
-	while (vg->state != VG_STATE_TERMINATED) {
-	  vg_set_state(vg, VG_STATE_IDLE);
-	  DBG(vg, "Put the main thread in a sleep\n");
-	  sleep_thread(vg);
+	while (!is_terminated(vg)) {
+	  if (vg_set_state(vg, VG_STATE_IDLE)) {
+	    DBG(vg, "Put the main thread in a sleep\n");
+	    sleep_thread(vg);
+	  }
 	  if (exception_in_progress(vg)) {
-	    handle_exception(vg);
+	    if (!down_interruptible(&vg->exception_sem)) {
+	      handle_exception(vg);
+	      up(&vg->exception_sem);
+	    } else {
+	      WARN(vg, "Exception handler interrupted\n");
+	      vg_set_state(vg, VG_STATE_TERMINATED);
+	    }
 	    continue;
 	  }
 	  vg_set_state(vg, VG_STATE_RUNNING);
@@ -1676,7 +1735,7 @@ static void dump_msg(struct vg_dev *vg, const char *label,
 	while (length > 0) {
 		num = min(length, 16u);
 		p = line;
-		for (i = 0; i < num; ++i) {
+		for (i = 0; i < num; i++) {
 			if (i == 8)
 				*p++ = ' ';
 			sprintf(p, " %02x", buf[i]);
