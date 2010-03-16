@@ -503,7 +503,7 @@ static void vg_init_requests(struct vg_buffer_queue *bufq)
   int i;
 
   MDBG("Initialize queue of %d elements\n", VG_NUM_BUFFERS);
-  for (i = 0; i < VG_NUM_BUFFERS; ++i) {
+  for (i = 0; i < VG_NUM_BUFFERS; i++) {
     bufq->buffhds[i].req = NULL;
   }
 }
@@ -516,7 +516,7 @@ static int vg_allocate_requests(struct vg_buffer_queue *bufq,
   int rc = 0;
 
   MDBG("Allocate %d requests for %s\n", VG_NUM_BUFFERS, ep->name);
-  for (i = 0; rc == 0 && i < VG_NUM_BUFFERS; ++i) {
+  for (i = 0; rc == 0 && i < VG_NUM_BUFFERS; i++) {
     if (bufq->buffhds[i].req != NULL) {
       MERROR("Request already allocated\n");
       continue;
@@ -555,7 +555,7 @@ static void vg_free_requests(struct vg_buffer_queue *bufq,
   int i;
 
   MDBG("Free %d requests for %s\n", VG_NUM_BUFFERS, ep->name);
-  for (i = 0; i < VG_NUM_BUFFERS; ++i) {
+  for (i = 0; i < VG_NUM_BUFFERS; i++) {
     if (bufq->buffhds[i].req) {
       vg_free_request_buffer(ep, bufq->buffhds[i].req, VG_BUF_SIZE);
       usb_ep_free_request(ep, bufq->buffhds[i].req);
@@ -571,7 +571,7 @@ static void vg_dequeue_all(struct vg_buffer_queue *bufq,
 {
   int i;
 
-  for (i = 0; i < VG_NUM_BUFFERS; ++i) {
+  for (i = 0; i < VG_NUM_BUFFERS; i++) {
     if (bufq->buffhds[i].req_busy) {
       MDBG("Dequeue a request number %d for %s\n", i, ep->name);
       usb_ep_dequeue(ep, bufq->buffhds[i].req);
@@ -584,7 +584,7 @@ static int vg_no_transfers(struct vg_buffer_queue *bufq)
 {
   int i;
 
-  for (i = 0; i < VG_NUM_BUFFERS; ++i) {
+  for (i = 0; i < VG_NUM_BUFFERS; i++) {
     if (bufq->buffhds[i].req_busy) {
       return 0;
     }
@@ -1671,7 +1671,7 @@ static void dump_msg(struct vg_dev *vg, const char *label,
 	while (length > 0) {
 		num = min(length, 16u);
 		p = line;
-		for (i = 0; i < num; ++i) {
+		for (i = 0; i < num; i++) {
 			if (i == 8)
 				*p++ = ' ';
 			sprintf(p, " %02x", buf[i]);
