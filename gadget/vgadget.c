@@ -469,6 +469,11 @@ static int vg_allocate_request_buffer(struct usb_ep *ep,
 {
   int rc;
 
+  if (req->buf != NULL) {
+    MERROR("Buffer already allocated\n");
+    return -EINVAL;
+  }
+
   req->buf = kmalloc(len, flags);
   if (req->buf) {
     rc = 0;
@@ -486,6 +491,7 @@ static void vg_free_request_buffer(struct usb_ep *ep,
 				   unsigned len)
 {
   kfree(req->buf);
+  req->buf = NULL;
 }
 
 /* Allocates a buffer queue */
@@ -497,6 +503,10 @@ static int vg_allocate_requests(struct vg_buffer_queue *bufq,
 
   MDBG("Allocate %d requests for %s\n", VG_NUM_BUFFERS, ep->name);
   for (i = 0; rc == 0 && i < VG_NUM_BUFFERS; ++i) {
+    if (bufq->buffhds[i].req != NULL) {
+      MERROR("Request already allocated\n");
+      continue;
+    }
     bufq->buffhds[i].req_busy = 0;
     if ((bufq->buffhds[i].req =
 	 usb_ep_alloc_request(ep, GFP_ATOMIC)) != NULL) {
