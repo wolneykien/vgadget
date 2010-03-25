@@ -279,7 +279,7 @@ static struct file_operations vdev_fops = {
  * and to have the device registered with the driver core
  */
 static struct usb_class_driver vdev_class = {
-	.name =		"skel%d",
+	.name =		"usbcons%d",
 	.fops =		&vdev_fops,
 	.minor_base =	minor,
 };
