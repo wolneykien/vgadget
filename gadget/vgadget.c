@@ -153,6 +153,8 @@ cs_intf_desc = {
 	.bLength =		sizeof intf_desc,
 	.bDescriptorType =	USB_DT_INTERFACE,
 
+	/* The interface number 0 */
+	.bInterfaceNumber =     0,
 	.bNumEndpoints =	2,
 	.bInterfaceClass =	USB_CLASS_VENDOR_SPEC,
 	.bInterfaceSubClass =	USB_PR_BULK,
@@ -165,6 +167,8 @@ fifo_intf_desc = {
 	.bLength =		sizeof intf_desc,
 	.bDescriptorType =	USB_DT_INTERFACE,
 
+	/* The interface number 1 */
+	.bInterfaceNumber =     1,
 	.bNumEndpoints =	1,
 	.bInterfaceClass =	USB_CLASS_VENDOR_SPEC,
 	.bInterfaceSubClass =	USB_PR_BULK,
