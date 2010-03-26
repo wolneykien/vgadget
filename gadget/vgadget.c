@@ -147,13 +147,25 @@ otg_desc = {
 /* Transport type constant */
 #define USB_PR_BULK             0x50 // Bulk-only
 
-/* The gadget USB interface descritor */
+/* The gadget CS USB interface descritor */
 static struct usb_interface_descriptor
-intf_desc = {
+cs_intf_desc = {
 	.bLength =		sizeof intf_desc,
 	.bDescriptorType =	USB_DT_INTERFACE,
 
-	.bNumEndpoints =	3,
+	.bNumEndpoints =	2,
+	.bInterfaceClass =	USB_CLASS_VENDOR_SPEC,
+	.bInterfaceSubClass =	USB_PR_BULK,
+	.bInterfaceProtocol =	USB_PR_BULK,
+};
+
+/* The gadget CS USB interface descritor */
+static struct usb_interface_descriptor
+fifo_intf_desc = {
+	.bLength =		sizeof intf_desc,
+	.bDescriptorType =	USB_DT_INTERFACE,
+
+	.bNumEndpoints =	1,
 	.bInterfaceClass =	USB_CLASS_VENDOR_SPEC,
 	.bInterfaceSubClass =	USB_PR_BULK,
 	.bInterfaceProtocol =	USB_PR_BULK,
@@ -218,7 +230,8 @@ fs_bulk_status_in_desc = {
 /* The set of full-speed endpoint descriptors */
 static const struct usb_descriptor_header *fs_function[] = {
 	(struct usb_descriptor_header *) &otg_desc,
-	(struct usb_descriptor_header *) &intf_desc,
+	(struct usb_descriptor_header *) &cs_intf_desc,
+	(struct usb_descriptor_header *) &fifo_intf_desc,
 	(struct usb_descriptor_header *) &fs_bulk_out_desc,
 	(struct usb_descriptor_header *) &fs_bulk_in_desc,
 	(struct usb_descriptor_header *) &fs_bulk_status_in_desc,
@@ -280,7 +293,8 @@ hs_bulk_status_in_desc = {
 /* The set of high-speed endpoint descriptors */
 static const struct usb_descriptor_header *hs_function[] = {
 	(struct usb_descriptor_header *) &otg_desc,
-	(struct usb_descriptor_header *) &intf_desc,
+	(struct usb_descriptor_header *) &cs_intf_desc,
+	(struct usb_descriptor_header *) &fifo_intf_desc,
 	(struct usb_descriptor_header *) &hs_bulk_out_desc,
 	(struct usb_descriptor_header *) &hs_bulk_in_desc,
 	(struct usb_descriptor_header *) &hs_bulk_status_in_desc,
