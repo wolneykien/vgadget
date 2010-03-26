@@ -32,22 +32,18 @@ MODULE_DESCRIPTION(DRIVER_DESC);
 MODULE_AUTHOR("Paul Wolneykien");
 MODULE_LICENSE("GPL");
 
-/* Static variables for vendor and product IDs */
-unsigned short vendor = 0xfff;
-unsigned short product = 0xfff;
-
 /* Table of devices that work with this driver */
 static struct usb_device_id vdev_table[] = {
-	{ USB_DEVICE(vendor, product) },
+	{ USB_DEVICE(0xfff, 0xfff) },
 	{ }					/* Terminating entry */
 };
-MODULE_DEVICE_TABLE (usb, skel_table);
+MODULE_DEVICE_TABLE (usb, vdev_table);
 
 /* Parameterize vendor and product IDs */
-module_param_named(vendor, vendor, ushort, S_IRUGO);
+module_param_named(vendor, vdev_table[0].idVendor, ushort, S_IRUGO);
 MODULE_PARM_DESC(vendor, "USB Vendor ID");
 
-module_param_named(product, product, ushort, S_IRUGO);
+module_param_named(product, vdev_table[0].idProduct, ushort, S_IRUGO);
 MODULE_PARM_DESC(product, "USB Product ID");
 
 /* General I/O timemout, jiffies */
