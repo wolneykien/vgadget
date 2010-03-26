@@ -64,7 +64,16 @@ MODULE_PARM_DESC(minor, "USB interface base minor number");
 #define MAX_TRANSFER		( PAGE_SIZE - 512 )
 #define WRITES_IN_FLIGHT	8
 
-/* Structure to hold all of our device specific stuff */
+/* Common structure to hold working data of the devices */
+struct usb_vdev_common {
+  /* general params */
+  struct kref kref;
+  /* USB params */
+  struct usb_device *udev;
+  struct usb_interface *interface;
+}
+
+/* Structure to hold working data of the command-status device */
 struct usb_vdev {
   /* general params */
   struct kref kref;
@@ -73,10 +82,6 @@ struct usb_vdev {
   struct usb_interface *interface;
   /* limiting the number of writes in progress */
   struct semaphore limit_sem;
-  /* the buffer to receive data */
-  unsigned char *bulk_in_buffer;
-  size_t bulk_in_size;
-  __u8 bulk_in_epaddr;
   /* the buffer to receive status data */
   unsigned char *bulk_status_in_buffer
   size_t bulk_status_in_size;
@@ -86,36 +91,64 @@ struct usb_vdev {
 };
 #define to_vdev(d) container_of(d, struct usb_vdev, kref)
 
-/* Device driver instance (prototype) */
+/* Structure to hold working data of the FIFO device */
+struct usb_vfdev {
+  /* general params */
+  struct kref kref;
+  /* USB params */
+  struct usb_device *udev;
+  struct usb_interface *interface;
+  /* the buffer to receive data */
+  unsigned char *bulk_in_buffer;
+  size_t bulk_in_size;
+  __u8 bulk_in_epaddr;
+};
+#define to_vfdev(d) container_of(d, struct usb_vfdev, kref)
+
+/* CS device driver instance (prototype) */
 static struct usb_driver vdev_driver;
 
-/* Cleanup procedure */
+/* FIFO device driver instance (prototype) */
+static struct usb_driver vfdev_driver;
+
+/* CS device cleanup procedure */
 static void vdev_delete(struct kref *kref)
 {	
 	struct usb_vdev *dev = to_vdev(kref);
 
 	usb_put_dev(dev->udev);
-	if (dev->bulk_in_buffer) {
-	  kfree(dev->bulk_in_buffer);
-	}
 	if (dev->bulk_status_in_buffer) {
 	  kfree(dev->bulk_status_in_buffer);
 	}
 	kfree(dev);
 }
 
-/* Accociates the device instance with an interface on the
- * device class file open. Device driver instance is also
- * initialized */
-static int vdev_open(struct inode *inode, struct file *file)
+/* FIFO device cleanup procedure */
+static void vfdev_delete(struct kref *kref)
+{	
+	struct usb_vfdev *dev = to_vdev(kref);
+
+	usb_put_dev(dev->udev);
+	if (dev->bulk_in_buffer) {
+	  kfree(dev->bulk_in_buffer);
+	}
+	kfree(dev);
+}
+
+/* Accociates a device instance with a given interface on the
+ * device class file open. A given device driver instance is
+ * also initialized */
+static int open_common(struct inode *inode,
+		       struct file *file,
+		       struct usb_driver *driver)
 {
-	struct usb_vdev *dev;
+	void *usb_vdev_common;
 	struct usb_interface *interface;
 	int subminor;
 
 	subminor = iminor(inode);
 
-	interface = usb_find_interface(&vdev_driver, subminor);
+	interface = usb_find_interface(driver, subminor);
 	if (!interface) {
 		err ("%s - error, can't find device for minor %d",
 		     __FUNCTION__, subminor);
@@ -136,46 +169,104 @@ static int vdev_open(struct inode *inode, struct file *file)
 	return 0;
 }
 
-/* De-associetes the device and driver instances */
-static int vdev_release(struct inode *inode, struct file *file)
+/* Accociates the CS device on the device class file open */
+static int vdev_open(struct inode *inode, struct file *file)
 {
-	struct usb_vdev *dev;
+  return open_common(inode, file, &vdev_driver);
+}
+
+/* Accociates the FIFO device on the device class file open */
+static int vfdev_open(struct inode *inode, struct file *file)
+{
+  return open_common(inode, file, &vfdev_driver);
+}
+
+/* De-associetes a device and driver instances */
+static int release_common(struct inode *inode,
+			  struct file *file,
+			  void (*delete)(struct kref *kref))
+{
+	struct usb_vdev_common *dev;
 
 	dev = (struct usb_vdev *)file->private_data;
 	if (dev == NULL)
 		return -ENODEV;
 
 	/* decrement the count on our device */
-	kref_put(&dev->kref, vdev_delete);
+	kref_put(&dev->kref, delete);
 	return 0;
+}
+
+/* De-associetes the CS device and driver instances */
+static int vdev_release(struct inode *inode, struct file *file)
+{
+  return release_common(inode, file, vdev_delete);
+}
+
+/* De-associetes the FIFO device and driver instances */
+static int vdev_release(struct inode *inode, struct file *file)
+{
+  return release_common(inode, file, vfdev_delete);
+}
+
+/* Interface procedure for reading data from a gadget */
+static ssize_t read_common(struct file *file,
+			   char *buffer,
+			   size_t count,
+			   loff_t *ppos,
+			   unsigned char *bulk_in_buffer,
+			   size_t bulk_in_size,
+			   __u8 bulk_in_epaddr)
+{
+  struct usb_vdev_common *dev;
+  int retval = 0;
+  int bytes_read;
+
+  dev = (struct usb_vdev *)file->private_data;
+	
+  /* do a blocking bulk read to get data from the device */
+  retval = usb_bulk_msg(dev->udev,
+			usb_rcvbulkpipe(dev->udev,
+					bulk_in_epaddr),
+			bulk_in_buffer,
+			min(bulk_in_size, count),
+			&bytes_read, timeout);
+
+  /* if the read was successful, copy the data to userspace */
+  // TODO: copy via DMA
+  if (!retval) {
+    if (copy_to_user(buffer, bulk_in_buffer, bytes_read)) {
+      retval = -EFAULT;
+    } else {
+      retval = bytes_read;
+    }
+  }
+
+  return retval;
 }
 
 /* Interface procedure for reading status data from a gadget */
 static ssize_t status_read(struct file *file, char *buffer, size_t count, loff_t *ppos)
 {
-	struct usb_vdev *dev;
-	int retval = 0;
-	int bytes_read;
+  struct usb_vdev_common *dev;
 
-	dev = (struct usb_vdev *)file->private_data;
-	
-	/* do a blocking bulk read to get data from the device */
-	retval = usb_bulk_msg(dev->udev,
-			      usb_rcvbulkpipe(dev->udev, dev->bulk_status_in_epaddr),
-			      dev->bulk_status_in_buffer,
-			      min(dev->bulk_status_in_size, count),
-			      &bytes_read, timeout);
+  dev = (struct usb_vdev *)file->private_data;
+  return read_common(file, buffer, count, ppos,
+		     dev->bulk_status_in_buffer,
+		     dev->bulk_status_in_size,
+		     dev->bulk_status_in_epaddr);
+}
 
-	/* if the read was successful, copy the data to userspace */
-	// TODO: copy via DMA
-	if (!retval) {
-		if (copy_to_user(buffer, dev->bulk_in_buffer, bytes_read))
-			retval = -EFAULT;
-		else
-			retval = bytes_read;
-	}
+/* Interface procedure for reading file data from a gadget */
+static ssize_t fifo_read(struct file *file, char *buffer, size_t count, loff_t *ppos)
+{
+  struct usb_vdev_common *dev;
 
-	return retval;
+  dev = (struct usb_vfdev *)file->private_data;
+  return read_common(file, buffer, count, ppos,
+		     dev->bulk_in_buffer,
+		     dev->bulk_in_size,
+		     dev->bulk_in_epaddr);
 }
 
 /* Handles a finished bulk write request */
@@ -274,14 +365,26 @@ static struct file_operations vdev_fops = {
 	.release =	vdev_release,
 };
 
-/* 
- * usb class driver info in order to get a minor number from the usb core,
- * and to have the device registered with the driver core
- */
+/* CS USB class driver info */
 static struct usb_class_driver vdev_class = {
 	.name =		"usbcons%d",
 	.fops =		&vdev_fops,
 	.minor_base =	minor,
+};
+
+/* FIFO I/O and class device file operations */
+static struct file_operations vfdev_fops = {
+	.owner =	THIS_MODULE,
+	.read =		fifo_read,
+	.open =		vfdev_open,
+	.release =	vfdev_release,
+};
+
+/* FIFO USB class driver info */
+static struct usb_class_driver vfdev_class = {
+	.name =		"usbconsf%d",
+	.fops =		&vfdev_fops,
+	.minor_base =	minor + 0x10,
 };
 
 #define fill_in_ep(ep_prefix) \
@@ -289,7 +392,7 @@ static struct usb_class_driver vdev_class = {
   dev->ep_prefix##_epaddr = endpoint->bEndpointAddress;			\
   dev->ep_prefix##_buffer = kmalloc(le16_to_cpu(endpoint->wMaxPacketSize), GFP_KERNEL);
 
-/* USB probbing procedure */
+/* USB probbing procedure for the CS device */
 static int vdev_probe(struct usb_interface *interface, const struct usb_device_id *id)
 {
 	struct usb_vdev *dev = NULL;
@@ -297,7 +400,12 @@ static int vdev_probe(struct usb_interface *interface, const struct usb_device_i
 	struct usb_endpoint_descriptor *endpoint;
 	size_t buffer_size;
 	int i;
-	int retval = -ENOMEM;
+	int retval = -ENODEV;
+
+	/* Check the interface number (0) */
+	if (interface->cur_altsetting.desc.bInterfaceNumber != 0) {
+	  return retval;
+	}
 
 	/* allocate memory for our device state and initialize it */
 	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
@@ -312,7 +420,6 @@ static int vdev_probe(struct usb_interface *interface, const struct usb_device_i
 	dev->interface = interface;
 
 	/* set up the endpoint information */
-	dev->bulk_in_epaddr = 0;
 	dev->bulk_status_in_epaddr = 0;
 	dev->bulk_out_epaddr = 0;
 	iface_desc = interface->cur_altsetting;
@@ -324,9 +431,7 @@ static int vdev_probe(struct usb_interface *interface, const struct usb_device_i
 	       && ((endpoint->bmAttributes				\
 		    & USB_ENDPOINT_XFERTYPE_MASK) == USB_ENDPOINT_XFER_BULK)) {
 	    /* we found a bulk in endpoint */
-	    if (!dev->bulk_in_epaddr) {
-	      fill_in_ep(bulk_in);
-	    } else if (!dev->bulk_status_in_epaddr) {
+	    if (!dev->bulk_status_in_epaddr) {
 	      fill_in_ep(bulk_status_in);
 	    } else {
 	      continue;
@@ -344,15 +449,13 @@ static int vdev_probe(struct usb_interface *interface, const struct usb_device_i
 	  }
 	}
 
-	if (!dev->bulk_in_epaddr \
-	    || !dev->bulk_status_in_epaddr \
-	    || !dev->bulk_out_epaddr) {
+	if (!dev->bulk_status_in_epaddr || !dev->bulk_out_epaddr) {
 	  err("Could not find both bulk-in and bulk-out endpoints");
 	  kref_put(&dev->kref, vdev_delete);
 	  return -EINVAL;
 	}
 
-	if (!dev->bulk_in_buffer || !dev->bulk_status_in_buffer) {
+	if (!dev->bulk_status_in_buffer) {
 	  err("Could not allocate bulk_in_buffer");
 	  kref_put(&dev->kref, vdev_delete);
 	  return -ENOMEM;
@@ -365,21 +468,100 @@ static int vdev_probe(struct usb_interface *interface, const struct usb_device_i
 	retval = usb_register_dev(interface, &vdev_class);
 	if (retval) {
 		/* something prevented us from registering this driver */
-		err("Not able to get a minor for this device.");
+		err("Not able to get a minor for the CS device.");
 		usb_set_intfdata(interface, NULL);
 		kref_put(&dev->kref, vdev_delete);
 		return retval;
 	}
 
 	/* let the user know what node this device is now attached to */
-	info("USB Versatile device is now attached to USBSkel-%d", interface->minor);
+	info("USB Versatile device command-status intarface "
+	     "is now attached to usbcons%d", interface->minor);
+	return 0;
+}
+
+/* USB probbing procedure for the FIFO device */
+static int vfdev_probe(struct usb_interface *interface, const struct usb_device_id *id)
+{
+	struct usb_vfdev *dev = NULL;
+	struct usb_host_interface *iface_desc;
+	struct usb_endpoint_descriptor *endpoint;
+	size_t buffer_size;
+	int i;
+	int retval = -ENODEV;
+
+	/* Check the interface number (1) */
+	if (interface->cur_altsetting.desc.bInterfaceNumber != 1) {
+	  return retval;
+	}
+
+	/* allocate memory for our device state and initialize it */
+	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
+	if (dev == NULL) {
+		err("Out of memory");
+	        return -ENOMEM;
+	}
+	kref_init(&dev->kref);
+
+	dev->udev = usb_get_dev(interface_to_usbdev(interface));
+	dev->interface = interface;
+
+	/* set up the endpoint information */
+	dev->bulk_in_epaddr = 0;
+	dev->bulk_out_epaddr = 0;
+	iface_desc = interface->cur_altsetting;
+	for (i = 0; i < iface_desc->desc.bNumEndpoints; ++i) {
+	  endpoint = &iface_desc->endpoint[i].desc;
+
+	  if ( ((endpoint->bEndpointAddress				\
+		 & USB_ENDPOINT_DIR_MASK) == USB_DIR_IN)		\
+	       && ((endpoint->bmAttributes				\
+		    & USB_ENDPOINT_XFERTYPE_MASK) \
+		   == USB_ENDPOINT_XFER_BULK)) {
+	    /* we found a bulk in endpoint */
+	    if (!dev->bulk_in_epaddr) {
+	      fill_in_ep(bulk_in);
+	    }
+	  }
+	}
+
+	if (!dev->bulk_in_epaddr) {
+	  err("Could not find both bulk-in and bulk-out endpoints");
+	  kref_put(&dev->kref, vfdev_delete);
+	  return -EINVAL;
+	}
+
+	if (!dev->bulk_status_in_buffer) {
+	  err("Could not allocate bulk_in_buffer");
+	  kref_put(&dev->kref, vfdev_delete);
+	  return -ENOMEM;
+	}
+
+	/* save our data pointer in this interface device */
+	usb_set_intfdata(interface, dev);
+
+	/* we can register the device now, as it is ready */
+	retval = usb_register_dev(interface, &vfdev_class);
+	if (retval) {
+		/* something prevented us from registering this driver */
+		err("Not able to get a minor for the FIFO device.");
+		usb_set_intfdata(interface, NULL);
+		kref_put(&dev->kref, vfdev_delete);
+		return retval;
+	}
+
+	/* let the user know what node this device is now attached to */
+	info("USB Versatile device FIFO intarface "
+	     "is now attached to usbconsf%d", interface->minor);
 	return 0;
 }
 
 /* Handles a USB device disconnect event */
-static void vdev_disconnect(struct usb_interface *interface)
+static void disconnect_common(struct usb_interface *interface,
+			      struct usb_class_driver *dev_class,
+			      void (*delete)(struct kref *kref))
 {
-	struct usb_vdev *dev;
+	struct usb_vdev_common *dev;
 	int minor = interface->minor;
 
 	/* prevent vdev_open() from racing vdev_disconnect() */
@@ -389,17 +571,29 @@ static void vdev_disconnect(struct usb_interface *interface)
 	usb_set_intfdata(interface, NULL);
 
 	/* give back our minor number */
-	usb_deregister_dev(interface, &vdev_class);
+	usb_deregister_dev(interface, dev_class);
 
 	unlock_kernel();
 
 	/* decrement the usage count */
-	kref_put(&dev->kref, vdev_delete);
+	kref_put(&dev->kref, delete);
 
 	info("USB Versatile device #%d is now disconnected", minor);
 }
 
-/* Device driver instance */
+/* Handles a USB CS device disconnect event */
+static void vdev_disconnect(struct usb_interface *interface)
+{
+  disconnect_common(interface, &vdev_class, vdev_delete);
+}
+
+/* Handles a USB FIFO device disconnect event */
+static void vfdev_disconnect(struct usb_interface *interface)
+{
+  disconnect_common(interface, &vfdev_class, vfdev_delete);
+}
+
+/* CS device driver instance */
 static struct usb_driver vdev_driver = {
 	.name =		"vdevice",
 	.probe =	vdev_probe,
@@ -407,15 +601,28 @@ static struct usb_driver vdev_driver = {
 	.id_table =	vdev_table,
 };
 
+/* FIFO device driver instance */
+static struct usb_driver vdev_driver = {
+	.name =		"vdevice-fifo",
+	.probe =	vfdev_probe,
+	.disconnect =	vfdev_disconnect,
+	.id_table =	dev_table,
+};
+
 /* Module initialization procedure */
 static int __init usb_vdev_init(void)
 {
 	int result;
 
-	/* register the driver with the USB subsystem */
-	result = usb_register(&vdev_driver);
-	if (result) {
-	  err("usb_register failed. Error number %d", result);
+	/* Register the CS driver with the USB subsystem */
+	if (!(result = usb_register(&vdev_driver)) != 0) {
+	  err("CS device registration failed. Error number %d", result);
+	}
+	if (result == 0) {
+	  /* Register the FIFO driver with the USB subsystem */
+	  if (!(result = usb_register(&vfdev_driver)) != 0) {
+	    err("FIFO device registration failed. Error number %d", result);
+	  }
 	}
 
 	return result;
@@ -424,8 +631,10 @@ static int __init usb_vdev_init(void)
 /* Module exit procedure */
 static void __exit usb_vdev_exit(void)
 {
-	/* deregister this driver with the USB subsystem */
+	/* Unregister the CS driver with the USB subsystem */
 	usb_deregister(&vdev_driver);
+	/* Unregister the FIFO driver with the USB subsystem */
+	usb_deregister(&vfdev_driver);
 }
 
 module_init (usb_vdev_init);
