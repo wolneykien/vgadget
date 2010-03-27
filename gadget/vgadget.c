@@ -644,6 +644,8 @@ static int __init autoconfig_endpoint(struct vg_dev *vg,
   if (*ep) {
     /* Claim the endpoint */
     (*ep)->driver_data = vg;
+    DBG(vg, "Endpoint %s autoconfigured: address = 0x%x, maxpacket %d\n",
+	(*ep)->name, desc->bEndpointAddress, desc->wMaxPacketSize);
     rc = 0;
   } else {
     rc = -ENOTSUPP;
