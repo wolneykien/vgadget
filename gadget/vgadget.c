@@ -129,7 +129,7 @@ config_desc = {
 	.bDescriptorType =	USB_DT_CONFIG,
 
 	/* wTotalLength computed by usb_gadget_config_buf() */
-	.bNumInterfaces =	1,
+	.bNumInterfaces =	2,
 	.bConfigurationValue =	CONFIG_VALUE,
 	.bmAttributes =		USB_CONFIG_ATT_ONE | USB_CONFIG_ATT_SELFPOWER,
 	.bMaxPower =		1,	// self-powered
