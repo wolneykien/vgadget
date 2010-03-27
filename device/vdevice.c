@@ -472,8 +472,9 @@ static int vdev_probe(struct usb_interface *interface, const struct usb_device_i
 	}
 
 	/* let the user know what node this device is now attached to */
-	info("USB Versatile device command-status intarface "
-	     "is now attached to usbcons%d", interface->minor);
+	dev_info(&interface->dev,
+		 "USB Versatile device command-status intarface "
+	         "is now attached to usbcons%d", interface->minor);
 	return 0;
 }
 
@@ -546,8 +547,9 @@ static int vfdev_probe(struct usb_interface *interface, const struct usb_device_
 	}
 
 	/* let the user know what node this device is now attached to */
-	info("USB Versatile device FIFO intarface "
-	     "is now attached to usbconsf%d", interface->minor);
+	dev_info(&interface->dev,
+		 "USB Versatile device FIFO intarface "
+	         "is now attached to usbconsf%d", interface->minor);
 	return 0;
 }
 
@@ -573,7 +575,9 @@ static void disconnect_common(struct usb_interface *interface,
 	/* decrement the usage count */
 	kref_put(&dev->kref, delete);
 
-	info("USB Versatile device #%d is now disconnected", minor);
+	dev_info(&interface->dev,
+		 "USB Versatile device #%d is now disconnected",
+		 minor);
 }
 
 /* Handles a USB CS device disconnect event */
