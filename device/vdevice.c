@@ -616,12 +616,12 @@ static int __init usb_vdev_init(void)
 	/* Adjust the minor base number */
 	vfdev_class.minor_base = vdev_class.minor_base + 0x10;
 	/* Register the CS driver with the USB subsystem */
-	if (!(result = usb_register(&vdev_driver)) != 0) {
+	if ((result = usb_register(&vdev_driver)) != 0) {
 	  err("CS device registration failed. Error number %d", result);
 	}
 	if (result == 0) {
 	  /* Register the FIFO driver with the USB subsystem */
-	  if (!(result = usb_register(&vfdev_driver)) != 0) {
+	  if ((result = usb_register(&vfdev_driver)) != 0) {
 	    err("FIFO device registration failed. Error number %d", result);
 	  }
 	}
