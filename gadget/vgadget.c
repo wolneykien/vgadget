@@ -235,10 +235,10 @@ fs_bulk_status_in_desc = {
 static const struct usb_descriptor_header *fs_function[] = {
 	(struct usb_descriptor_header *) &otg_desc,
 	(struct usb_descriptor_header *) &cs_intf_desc,
-	(struct usb_descriptor_header *) &fifo_intf_desc,
 	(struct usb_descriptor_header *) &fs_bulk_out_desc,
-	(struct usb_descriptor_header *) &fs_bulk_in_desc,
 	(struct usb_descriptor_header *) &fs_bulk_status_in_desc,
+	(struct usb_descriptor_header *) &fifo_intf_desc,
+	(struct usb_descriptor_header *) &fs_bulk_in_desc,
 	NULL
 };
 
@@ -298,10 +298,10 @@ hs_bulk_status_in_desc = {
 static const struct usb_descriptor_header *hs_function[] = {
 	(struct usb_descriptor_header *) &otg_desc,
 	(struct usb_descriptor_header *) &cs_intf_desc,
-	(struct usb_descriptor_header *) &fifo_intf_desc,
 	(struct usb_descriptor_header *) &hs_bulk_out_desc,
-	(struct usb_descriptor_header *) &hs_bulk_in_desc,
 	(struct usb_descriptor_header *) &hs_bulk_status_in_desc,
+	(struct usb_descriptor_header *) &fifo_intf_desc,
+	(struct usb_descriptor_header *) &hs_bulk_in_desc,
 	NULL
 };
 
