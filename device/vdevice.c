@@ -20,6 +20,10 @@
 #include <asm/uaccess.h>
 #include <linux/usb.h>
 
+/* Various macros */
+#define info(format, arg...) \
+  printk(KERN_INFO KBUILD_MODNAME ": " format "\n", ##arg)
+
 /* String constants */
 #define DRIVER_DESC		"Versatile Device"
 #define DRIVER_NAME		"vdevice"
@@ -616,12 +620,22 @@ static int __init usb_vdev_init(void)
 	/* Adjust the minor base number */
 	vfdev_class.minor_base = vdev_class.minor_base + 0x10;
 	/* Register the CS driver with the USB subsystem */
-	if ((result = usb_register(&vdev_driver)) != 0) {
+	if ((result = usb_register(&vdev_driver)) == 0) {
+	  info("CS device USB driver registered for "
+	       "vendor 0x%x, product 0x%x",
+	       vdev_driver.id_table[0].idVendor,
+	       vdev_driver.id_table[0].idProduct);
+	} else {
 	  err("CS device registration failed. Error number %d", result);
 	}
 	if (result == 0) {
 	  /* Register the FIFO driver with the USB subsystem */
-	  if ((result = usb_register(&vfdev_driver)) != 0) {
+	  if ((result = usb_register(&vfdev_driver)) == 0) {
+	    info("FIFO device USB driver registered for "
+		 "vendor 0x%x, product 0x%x",
+		 vdev_driver.id_table[0].idVendor,
+		 vdev_driver.id_table[0].idProduct);
+	  } else {
 	    err("FIFO device registration failed. Error number %d", result);
 	  }
 	}
