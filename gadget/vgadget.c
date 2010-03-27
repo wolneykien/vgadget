@@ -150,7 +150,7 @@ otg_desc = {
 /* The gadget CS USB interface descritor */
 static struct usb_interface_descriptor
 cs_intf_desc = {
-	.bLength =		sizeof intf_desc,
+	.bLength =		sizeof cs_intf_desc,
 	.bDescriptorType =	USB_DT_INTERFACE,
 
 	/* The interface number 0 */
@@ -164,7 +164,7 @@ cs_intf_desc = {
 /* The gadget CS USB interface descritor */
 static struct usb_interface_descriptor
 fifo_intf_desc = {
-	.bLength =		sizeof intf_desc,
+	.bLength =		sizeof fifo_intf_desc,
 	.bDescriptorType =	USB_DT_INTERFACE,
 
 	/* The interface number 1 */
