@@ -327,7 +327,7 @@ static ssize_t cmd_write(struct file *file, const char *user_buffer, size_t coun
 		up(&dev->limit_sem);
 		return -ENOMEM;
 	}
-
+	// TODO: transfer via DMA
 	if (copy_from_user(buf, user_buffer, writesize)) {
 	        usb_buffer_free(dev->udev, writesize, buf, urb->transfer_dma);
 		usb_free_urb(urb);
@@ -339,7 +339,6 @@ static ssize_t cmd_write(struct file *file, const char *user_buffer, size_t coun
 	usb_fill_bulk_urb(urb, dev->udev,
 			  usb_sndbulkpipe(dev->udev, dev->bulk_out_epaddr),
 			  buf, writesize, vdev_write_bulk_callback, dev);
-	// TODO: transfer via DMA
 	urb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
 
 	/* send the data out the bulk port */
