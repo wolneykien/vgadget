@@ -65,6 +65,9 @@ MODULE_PARM_DESC(minor, "USB interface base minor number");
 /* Define limits */
 #define MAX_TRANSFER		( PAGE_SIZE - 512 )
 
+/* The size of a read-ahead buffer */
+#define READ_BUF_SIZE   128
+
 /* The maximal number of write requests in the queue */
 static int maxwrites = 4;
 module_param_named(maxwrites, maxwrites, int, S_IRUGO);
@@ -106,11 +109,7 @@ struct usb_vdev {
 
 /* The URB buffer information linked list entry structure */
 struct urb_entry {
-  struct usb_device *dev; 	/* (in) pointer to associated device */
-  void *transfer_buffer;	/* (in) associated data buffer */
-  dma_addr_t transfer_dma;	/* (in) dma addr for transfer_buffer */
-  int transfer_buffer_length;	/* (in) data buffer length */
-  int actual_length;		/* (return) actual transfer length */
+  struct urb *urb;
   struct urb_entry *next;
 }
 
@@ -377,7 +376,7 @@ static ssize_t cmd_write(struct file *file, const char *user_buffer, size_t coun
 static int vfdev_urb_offer(struct usb_vfdev *dev, struct urb *urb)
 {
   struct buf_entry *queue;
-  struct buf_entry *entry;
+  struct urb_entry *urb_entry;
   int rc;
 
   if (down_interruptible(&dev->mutex) == 0) {
@@ -386,11 +385,7 @@ static int vfdev_urb_offer(struct usb_vfdev *dev, struct urb *urb)
     if (entry != NULL) {
       /* Offer the new entry to the queue*/
       up(&dev->queue_sem);
-      etnry->dev = urb->dev;
-      entry->transfer_buffer = urb->transfer_buffer;
-      entry->transfer_dma = urb->transfer_dma;
-      entry->transfer_buffer_length = urb->transfer_buffer_length;
-      entry->actual_length = urb->actual_length;
+      etnry->urb = urb;
       etnry->next = NULL;
       rc = 0;
     } else {
@@ -434,9 +429,59 @@ static void vfdev_bulk_read_callback(struct urb *urb)
   }
 }
 
+/* Enqueues a next read-request */
+static int fifo_read_enqueue(struct usb_vfdev *dev)
+{
+  static struct urb *urb;
+  void *buf;
+  int rc;
+
+  if ((rc = down_interruptible(&dev->limit_sem)) == 0) {
+    /* Create an urb, and a buffer for it, and copy the data to the urb */
+    urb = usb_alloc_urb(0, GFP_KERNEL);
+    if (urb == NULL) {
+      up(&dev->limit_sem);
+      rc = -ENOMEM;
+    }
+    if (rc == 0) {
+      buf = usb_buffer_alloc(dev->udev,
+			     READ_BUF_SIZE,
+			     GFP_KERNEL,
+			     &urb->transfer_dma);
+      if (buf == NULL) {
+	usb_free_urb(urb);
+	up(&dev->limit_sem);
+	rc = -ENOMEM;
+      }
+    }
+    if (rc == 0) {
+      /* initialize the urb properly */
+      usb_fill_bulk_urb(urb, dev->udev,
+			usb_rcvbulkpipe(dev->udev, dev->bulk_in_epaddr),
+			buf, READ_BUF_SIZE, vdev_bulk_read_callback,
+			dev);
+      urb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
+      /* send the read request */
+      rc = usb_submit_urb(urb, GFP_KERNEL);
+    }
+    if (rc == 0) {
+      err("%s - failed submitting read urb, error %d",
+	  __FUNCTION__,
+	  retval);
+      usb_buffer_free(dev->udev, READ_BUF_SIZE, buf,
+		      urb->transfer_dma);
+      usb_free_urb(urb);
+      up(&dev->limit_sem);
+    }
+    return rc;
+  } else {
+    return -ERESTARTSYS;
+  }
+}
+
 /* Takes one URB from the head of the queue */
 static int vfdev_buf_take(struct usb_vfdev *dev,
-			  struct buf_entry **entry)
+			  struct urb **urb)
 {
   struct urb_entry *next;
   int rc;
@@ -445,7 +490,7 @@ static int vfdev_buf_take(struct usb_vfdev *dev,
     /* Wait for the next available URB */
     rc = down_interruptible(&dev->queue_sem);
     if (rc == 0) {
-      *buf = dev->queue;
+      *urb = dev->queue->urb;
       next = dev->queue->next;
       kfree(dev->queue);
       dev->queue = next;
@@ -464,21 +509,23 @@ static int vfdev_buf_take(struct usb_vfdev *dev,
 static ssize_t fifo_read(struct file *file, char *buffer, size_t count, loff_t *ppos)
 {
   struct usb_vfdev *dev;
-  struct buf_entry *entry;
+  struct urb *urb;
   int rc;
 
   dev = (struct usb_vfdev *)file->private_data;
 
   /* Take the next URB from the queue */
-  if ((rc = vfdev_urb_take(dev, &entry)) == 0) {
+  if ((rc = vfdev_urb_take(dev, &urb)) == 0) {
     if ((rc = copy_to_user(buffer,
-			   entry->transfer_buffer,
-			   entry->actual_length)) == NULL) {
-      rc = entry->actual_length;
+			   urb->transfer_buffer,
+			   urb->actual_length)) == NULL) {
+      rc = urb->actual_length;
     }
     /* Free up the allocated buffer(s) */
-    usb_buffer_free(entry->dev, entry->transfer_buffer_length, 
-		    entry->transfer_buffer, entry->transfer_dma);
+    usb_buffer_free(urb->dev, urb->transfer_buffer_length, 
+		    urb->transfer_buffer, urb->transfer_dma);
+    /* Release the reference to the URB */
+    usb_free_urb(urb);
   }
 
   return rc;
