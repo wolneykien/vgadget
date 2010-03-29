@@ -515,6 +515,7 @@ static int vfdev_probe(struct usb_interface *interface, const struct usb_device_
 	        return -ENOMEM;
 	}
 	kref_init(&dev->kref);
+	sema_init(&dev->limit_sem, maxreads);
 
 	dev->udev = usb_get_dev(interface_to_usbdev(interface));
 	dev->interface = interface;
