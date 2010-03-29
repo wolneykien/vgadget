@@ -504,20 +504,29 @@ static int fifo_read_enqueue(struct usb_vfdev *dev)
 static int vfdev_urb_try_take(struct usb_vfdev *dev,
 			      struct urb **urb)
 {
-  if (down_interruptible(&dev->mutex) == 0) {
-    if (dev->queue != NULL) {
-      *urb = dev->queue->urb;
-      next = dev->queue->next;
-      kfree(dev->queue);
-      dev->queue = next;
+  struct urb_entry *next;
+
+  if (down_trylock(&dev->queue) == 0) {
+    if (down_interruptible(&dev->mutex) == 0) {
+      if (dev->queue != NULL) {
+	*urb = dev->queue->urb;
+	next = dev->queue->next;
+	kfree(dev->queue);
+	dev->queue = next;
+	/* Invite the read-ahead procedure to continue */
+	up(&dev->limit_sem);
+      } else {
+	*urb = NULL;
+      }
+      up(&dev->mutex);
+      return 0;
     } else {
       *urb = NULL;
+      return -ERESTARTSYS;
     }
-    up(&dev->mutex);
-    return 0;
   } else {
     *urb = NULL;
-    return -ERESTARTSYS;
+    return 0;
   }
 }
 
@@ -525,19 +534,19 @@ static int vfdev_urb_try_take(struct usb_vfdev *dev,
 static int vfdev_urb_take(struct usb_vfdev *dev,
 			  struct urb **urb)
 {
-  struct urb_entry *next;
   int rc;
   
-  /* Wait for the next available URB */
-  rc = down_interruptible(&dev->queue_sem);
-  if (rc == 0) {
-    rc = vfdev_urb_try_take(dev, urb);
-    /* Invite the read-ahead procedure to continue */
-    up(&dev->limit_sem);
-    return rc;
-  } else {
-    rc = -ERESTARTSYS;
+  /* Try to take an URB from the queue */
+  while ((rc = vfdev_urb_try_take(dev, urb)) == 0) {
+    if (*urb != NULL) {
+      /* Exit with the taken URB */
+      break;
+    } else {
+      /* Wait for the next available URB */
+      rc = down_interruptible(&dev->queue_sem);
+    }
   }
+  return rc;
 }
 
 /* Interface procedure for reading file data from a gadget */
@@ -778,7 +787,6 @@ static int vfdev_read_ahead_cleanup(struct usb_vfdev *dev)
   do {
     rc |= vfdev_urb_try_take(dev, &urb);
     if (urb != NULL) {
-      up(&dev->queue_sem);
       free_urb(urb);
     }
   } while (urb == NULL);
@@ -792,8 +800,6 @@ static int vfdev_read_ahead_stop(struct usb_vfdev *dev)
   int rc;
 
   atomic_set(&dev->read_ahead_status, 1);
-  /* Up-count the limit semaphore to wake up the read-ahead process */
-  up(&dev->limit_sem);
   vfdev_read_ahead_cleanup(dev);
   /* Wait for the read-ahead process to terminate */
   wait_for_completion(&dev->read_ahead_notifier);
