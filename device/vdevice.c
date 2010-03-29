@@ -471,7 +471,9 @@ static int fifo_read_enqueue(struct usb_vfdev *dev)
 			dev);
       urb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
       /* send the read request */
-      if ((rc = usb_submit_urb(urb, GFP_KERNEL)) != 0) {
+      if ((rc = usb_submit_urb(urb, GFP_KERNEL)) == 0) {
+	dbg("Submit a read-ahead URB");
+      } else {
 	err("%s - failed submitting read urb, error %d",
 	    __FUNCTION__,
 	    retval);
@@ -688,7 +690,7 @@ static int vfdev_read_ahead_loop(void *context)
     rc = fifo_read_enqueue(dev);
   } while (rc == 0);
 
-  dbg("Read ahead process finished (%d)", __FUNCTION__, rc);
+  dbg("Read ahead process finished (%d)", rc);
   complete_and_exit(&dev->read_ahead_notifier, rc);
 
   return rc;
@@ -699,7 +701,7 @@ static int vfdev_read_ahead_start(struct urb_vfdev *dev)
 {
   int rc;
 
-  dbg("Set up the read-ahead thread", __FUNCTION__, urb->status);
+  dbg("Set up the read-ahead thread");
   rc = kernel_thread(vfdev_read_ahead_loop,
 		     dev,
 		     (CLONE_VM | CLONE_FS | CLONE_FILES));
@@ -709,8 +711,7 @@ static int vfdev_read_ahead_start(struct urb_vfdev *dev)
   }
 
   if (rc == 0) {
-    dbg("Read ahead thread pid: %d\n", __FUNCTION__,
-	dev->read_ahead_pid);
+    dbg("Read ahead thread pid: %d\n", dev->read_ahead_pid);
   }
 
   return rc;
