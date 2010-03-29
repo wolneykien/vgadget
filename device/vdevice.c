@@ -126,6 +126,7 @@ struct usb_vfdev {
   /* mutex for queue access */
   struct semaphore mutex;
   /* the URB queue */
+  struct semaphore queue_sem;
   struct urb_entry *queue;
   /* the buffer to receive data */
   unsigned char *bulk_in_buffer;
@@ -383,6 +384,8 @@ static int vfdev_urb_offer(struct usb_vfdev *dev, struct urb *urb)
     /* Make a new queue entry */
     entry = kmalloc(sizeof struct buf_entry, GFP_KERNEL);
     if (entry != NULL) {
+      /* Offer the new entry to the queue*/
+      up(&dev->queue_sem);
       etnry->dev = urb->dev;
       entry->transfer_buffer = urb->transfer_buffer;
       entry->transfer_dma = urb->transfer_dma;
@@ -439,7 +442,7 @@ static int vfdev_buf_take(struct usb_vfdev *dev,
   
   if (down_interruptible(&dev->mutex) == 0) {
     /* Wait for the next available URB */
-    rc = down_interruptible(&dev->limit_sem);
+    rc = down_interruptible(&dev->queue_sem);
     if (rc == 0) {
       *buf = dev->queue;
       next = dev->queue->next;
@@ -625,7 +628,8 @@ static int vfdev_probe(struct usb_interface *interface, const struct usb_device_
 	        return -ENOMEM;
 	}
 	kref_init(&dev->kref);
-	sema_init(&dev->limit_sem, 0);
+	sema_init(&dev->limit_sem, maxreads);
+	sema_init(&dev->queue_sem, 0);
 	sema_init(&dev->mutex, 1);
 	dev->queue = NULL;
 
