@@ -107,6 +107,8 @@ struct usb_vdev {
   __u8 bulk_status_in_epaddr;
   /* the buffer to send command data */
   __u8 bulk_out_epaddr;
+  wait_queue_head_t cmd_wait;
+  atomic_t cmds_sent;
 };
 #define to_vdev(d) container_of(d, struct usb_vdev, kref)
 
@@ -325,7 +327,10 @@ static void vdev_write_bulk_callback(struct urb *urb)
 	/* free up our allocated buffer */
 	usb_buffer_free(urb->dev, urb->transfer_buffer_length, 
 			urb->transfer_buffer, urb->transfer_dma);
+	/* Send notifications */
 	up(&dev->limit_sem);
+	wake_up(&dev->cmd_wait);
+	atomic_dec(&dev->cmds_sent);
 }
 
 /* Interface procedure for writing command data to a gadget */
@@ -347,8 +352,9 @@ static ssize_t cmd_write(struct file *file, const char *user_buffer, size_t coun
 	/* limit the number of URBs in flight to stop a user from using up all RAM */
 	if (down_interruptible(&dev->limit_sem)) {
 		return -ERESTARTSYS;
+	} else {
+	  atomic_inc(&dev->cmds_sent);
 	}
-
 	/* create a urb, and a buffer for it, and copy the data to the urb */
 	urb = usb_alloc_urb(0, GFP_KERNEL);
 	if (!urb) {
@@ -585,8 +591,12 @@ static int vdev_poll(struct file *filp, poll_table *wait)
 
   dev = (struct usb_vdev *)filp->private_data; 
 
-  if (atomic_read(&dev->limit_sem.counter) > 0) {
+  if (atomic_read(&dev->cmds_sent) < maxwrites) {
+    /* Indicate that the write limit isn't exceeded */
     rc |= (POLLOUT | POLLWRNORM);
+  } else {
+    /* Add the command wait-queue to the poll table */
+    poll_wait(filp, &dev->cmd_wait, wait);
   }
 
   return rc;
@@ -677,6 +687,8 @@ static int vdev_probe(struct usb_interface *interface, const struct usb_device_i
 	}
 	kref_init(&dev->kref);
 	sema_init(&dev->limit_sem, maxwrites);
+	atomic_set(&dev->cmds_sent, 0);
+	init_waitqueue_head(&dev->cmd_wait);
 
 	dev->udev = usb_get_dev(interface_to_usbdev(interface));
 	dev->interface = interface;
