@@ -19,6 +19,7 @@
 #include <linux/kref.h>
 #include <asm/uaccess.h>
 #include <linux/usb.h>
+#include <linux/poll.h>
 
 /* Various macros */
 #define info(format, arg...) \
@@ -544,6 +545,43 @@ static ssize_t fifo_read(struct file *file, char *buffer, size_t count, loff_t *
   return rc;
 }
 
+/* Returns a bit mask indicating the current non-blocking
+ * operations that are available for the CS device */
+static int vdev_poll(struct file *filp, poll_table *wait)
+{
+  struct usb_vfdev *dev;
+  int rc;
+
+  dev = (struct usb_vdev *)filp->private_data; 
+
+  if (atomic_read(&dev->limit_sem.counter) > 0) {
+    rc |= (POLLOUT | POLLWRNORM);
+  }
+
+  return rc;
+}
+
+/* Returns a bit mask indicating the current non-blocking
+ * operations that are available for the FIFO device */
+static int vfdev_poll(struct file *filp, poll_table *wait)
+{
+  struct usb_vfdev *dev;
+  int rc;
+
+  dev = (struct usb_vfdev *)filp->private_data; 
+
+  if (down_interruptible(&dev->mutex) == 0) { //TODO: use an R/W mutex
+    rc = 0;
+    if (dev->queue != NULL) {
+      rc |= (POLLIN | POLLRDNORM);
+    }
+    up(&dev->mutex);
+    return rc;
+  } else {
+    return -ERESTARTSYS;
+  }
+}
+
 /* Command-status I/O and class device file operations */
 static struct file_operations vdev_fops = {
 	.owner =	THIS_MODULE,
@@ -551,6 +589,7 @@ static struct file_operations vdev_fops = {
 	.write =	cmd_write,
 	.open =		vdev_open,
 	.release =	vdev_release,
+	.poll =         vdev_poll,
 };
 
 /* CS USB class driver info */
@@ -566,6 +605,7 @@ static struct file_operations vfdev_fops = {
 	.read =		fifo_read,
 	.open =		vfdev_open,
 	.release =	vfdev_release,
+	.poll =         vfdev_poll,
 };
 
 /* FIFO USB class driver info */
