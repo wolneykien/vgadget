@@ -742,6 +742,7 @@ static int vfdev_read_ahead_start(struct urb_vfdev *dev)
   int rc;
 
   dbg("Set up the read-ahead thread");
+  init_completion(&dev->read_ahead_notifier);
   rc = kernel_thread(vfdev_read_ahead_loop,
 		     dev,
 		     (CLONE_VM | CLONE_FS | CLONE_FILES));
