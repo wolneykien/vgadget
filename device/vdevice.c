@@ -134,6 +134,7 @@ struct usb_vfdev {
   __u8 bulk_in_epaddr;
   /* The read-ahead process data */
   int read_ahead_pid;
+  atomic_t read_ahead_status;
   struct completion read_ahead_notifier;
 };
 #define to_vfdev(d) container_of(d, struct usb_vfdev, kref)
@@ -450,6 +451,10 @@ static int fifo_read_enqueue(struct usb_vfdev *dev)
   int rc;
 
   if ((rc = down_interruptible(&dev->limit_sem)) == 0) {
+    /* Exit immediately if the read-ahead process has been terminated */
+    if ((rc = atomic_read(&dev->read_ahead_status) != 0)) {
+      return rc;
+    }
     /* Create an urb, and a buffer for it, and copy the data to the urb */
     urb = usb_alloc_urb(0, GFP_KERNEL);
     if (urb == NULL) {
@@ -494,31 +499,43 @@ static int fifo_read_enqueue(struct usb_vfdev *dev)
   }
 }
 
+/* Take one URB from the head of the queue if any */
+static int vfdev_urb_try_take(struct usb_vfdev *dev,
+			      struct urb **urb)
+{
+  if (down_interruptible(&dev->mutex) == 0) {
+    if (dev->queue != NULL) {
+      *urb = dev->queue->urb;
+      next = dev->queue->next;
+      kfree(dev->queue);
+      dev->queue = next;
+    } else {
+      *urb = NULL;
+    }
+    up(&dev->mutex);
+    return 0;
+  } else {
+    *urb = NULL;
+    return -ERESTARTSYS;
+  }
+}
+
 /* Takes one URB from the head of the queue */
-static int vfdev_buf_take(struct usb_vfdev *dev,
+static int vfdev_urb_take(struct usb_vfdev *dev,
 			  struct urb **urb)
 {
   struct urb_entry *next;
   int rc;
   
-  if (down_interruptible(&dev->mutex) == 0) {
-    /* Wait for the next available URB */
-    rc = down_interruptible(&dev->queue_sem);
-    if (rc == 0) {
-      *urb = dev->queue->urb;
-      next = dev->queue->next;
-      kfree(dev->queue);
-      dev->queue = next;
-      /* Invite the read-ahead procedure to continue */
-      up(&dev->limit_sem);
-      rc = 0;
-    } else {
-      rc = -ERESTARTSYS;
-    }
-    up(&dev->mutex);
+  /* Wait for the next available URB */
+  rc = down_interruptible(&dev->queue_sem);
+  if (rc == 0) {
+    rc = vfdev_urb_try_take(dev, urb);
+    /* Invite the read-ahead procedure to continue */
+    up(&dev->limit_sem);
     return rc;
   } else {
-    return -ERESTARTSYS;
+    rc = -ERESTARTSYS;
   }
 }
 
@@ -717,15 +734,6 @@ static int vfdev_read_ahead_loop(void *context)
 
   dev = (struct usb_vfdev *)context;
 
-  /* Allow the thread to be killed by a signal, but set the signal mask
-   * to block everything but INT, TERM, KILL, and USR1. */
-  siginitsetinv(&signal_mask,
-		sigmask(SIGINT) \
-		| sigmask(SIGTERM) \
-		| sigmask(SIGKILL) \
-		| sigmask(SIGUSR1));
-  sigprocmask(SIG_SETMASK, &signal_mask, NULL);
-
   do {
     rc = fifo_read_enqueue(dev);
   } while (rc == 0);
@@ -737,7 +745,7 @@ static int vfdev_read_ahead_loop(void *context)
 }
 
 /* Starts the read-ahead loop */
-static int vfdev_read_ahead_start(struct urb_vfdev *dev)
+static int vfdev_read_ahead_start(struct usb_vfdev *dev)
 {
   int rc;
 
@@ -748,6 +756,7 @@ static int vfdev_read_ahead_start(struct urb_vfdev *dev)
 		     (CLONE_VM | CLONE_FS | CLONE_FILES));
   if (rc >= 0) {
     dev->read_ahead_pid = rc;
+    atomic_set(&dev->read_ahead_status, 0);
     rc = 0;
   }
 
@@ -758,12 +767,33 @@ static int vfdev_read_ahead_start(struct urb_vfdev *dev)
   return rc;
 }
 
+/* Cleanups the read-ahead queue */
+static int vfdev_read_ahead_cleanup(struct usb_vfdev *dev)
+{
+  struct urb *urb;
+  int rc;
+
+  rc = 0;
+  do {
+    rc |= vfdev_urb_try_take(dev, &urb);
+    if (urb != NULL) {
+      up(&dev->queue_sem);
+      free_urb(urb);
+    }
+  } while (urb == NULL);
+
+  return rc;
+}
+
 /* Interrupts (and terminates) the read-ahead loop */
 static int vfdev_read_ahead_stop(struct usb_vfdev *dev)
 {
   int rc;
 
-  rc =  kill_pid(dev->read_ahead_pid, SIGUSR1, SEND_SIG_FORCED);
+  atomic_set(&dev->read_ahead_status, 1);
+  /* Up-count the limit semaphore to wake up the read-ahead process */
+  up(&dev->limit_sem);
+  vfdev_read_ahead_cleanup(dev);
   /* Wait for the read-ahead process to terminate */
   wait_for_completion(&dev->read_ahead_notifier);
 
