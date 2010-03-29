@@ -286,6 +286,18 @@ static ssize_t status_read(struct file *file, char *buffer, size_t count, loff_t
 		     dev->bulk_status_in_epaddr);
 }
 
+/* Free a given URB */
+static void free_urb(struct urb *urb)
+{
+  /* Free up the allocated buffer(s) */
+  if (urb->transfer_buffer != NULL || urb->transfer_dma != NULL) {
+    usb_buffer_free(urb->dev, urb->transfer_buffer_length, 
+		    urb->transfer_buffer, urb->transfer_dma);
+  }
+  /* Release the reference to the URB */
+  usb_free_urb(urb);
+}
+
 /* Handles a finished bulk write request */
 static void vdev_write_bulk_callback(struct urb *urb)
 {
@@ -332,21 +344,15 @@ static ssize_t cmd_write(struct file *file, const char *user_buffer, size_t coun
 	/* create a urb, and a buffer for it, and copy the data to the urb */
 	urb = usb_alloc_urb(0, GFP_KERNEL);
 	if (!urb) {
-	        up(&dev->limit_sem);
 		return -ENOMEM;
 	}
 
 	buf = usb_buffer_alloc(dev->udev, writesize, GFP_KERNEL, &urb->transfer_dma);
 	if (!buf) {
-	        usb_free_urb(urb);
-		up(&dev->limit_sem);
 		return -ENOMEM;
 	}
 	// TODO: transfer via DMA
 	if (copy_from_user(buf, user_buffer, writesize)) {
-	        usb_buffer_free(dev->udev, writesize, buf, urb->transfer_dma);
-		usb_free_urb(urb);
-		up(&dev->limit_sem);
 		return -EFAULT;
 	}
 
@@ -358,10 +364,11 @@ static ssize_t cmd_write(struct file *file, const char *user_buffer, size_t coun
 
 	/* send the data out the bulk port */
 	retval = usb_submit_urb(urb, GFP_KERNEL);
-	if (retval) {
+	if (retval != 0) {
 		err("%s - failed submitting write urb, error %d", __FUNCTION__, retval);
-		usb_buffer_free(dev->udev, writesize, buf, urb->transfer_dma);
-		usb_free_urb(urb);
+		if (urb != NULL) {
+		  free_urb(urb);
+		}
 		up(&dev->limit_sem);
 		return retval;
 	}
@@ -410,18 +417,6 @@ static int vfdev_urb_offer(struct usb_vfdev *dev, struct urb *urb)
   } else {
     return -ERESTARTSYS;
   }
-}
-
-/* Free a given URB */
-static void free_urb(struct urb *urb)
-{
-  /* Free up the allocated buffer(s) */
-  if (urb->transfer_buffer != NULL || urb->transfer_dma != NULL) {
-    usb_buffer_free(urb->dev, urb->transfer_buffer_length, 
-		    urb->transfer_buffer, urb->transfer_dma);
-  }
-  /* Release the reference to the URB */
-  usb_free_urb(urb);
 }
 
 /* Handles a finished read-ahead request */
