@@ -430,6 +430,7 @@ static void vfdev_bulk_read_callback(struct urb *urb)
 	__FUNCTION__, urb->status);
   } else {
     vfdev_urb_offer((struct usb_vdev *)urb->context, urb);
+    up(&dev->limit_sem);
   }
 }
 
