@@ -104,6 +104,16 @@ struct usb_vdev {
 };
 #define to_vdev(d) container_of(d, struct usb_vdev, kref)
 
+/* The URB buffer information linked list entry structure */
+struct urb_entry {
+  struct usb_device *dev; 	/* (in) pointer to associated device */
+  void *transfer_buffer;	/* (in) associated data buffer */
+  dma_addr_t transfer_dma;	/* (in) dma addr for transfer_buffer */
+  int transfer_buffer_length;	/* (in) data buffer length */
+  int actual_length;		/* (return) actual transfer length */
+  struct urb_entry *next;
+}
+
 /* Structure to hold working data of the FIFO device */
 struct usb_vfdev {
   /* general params */
@@ -113,6 +123,10 @@ struct usb_vfdev {
   struct usb_interface *interface;
   /* limiting the number of reads in progress */
   struct semaphore limit_sem;
+  /* mutex for queue access */
+  struct semaphore mutex;
+  /* the URB queue */
+  struct urb_entry *queue;
   /* the buffer to receive data */
   unsigned char *bulk_in_buffer;
   size_t bulk_in_size;
@@ -272,18 +286,6 @@ static ssize_t status_read(struct file *file, char *buffer, size_t count, loff_t
 		     dev->bulk_status_in_epaddr);
 }
 
-/* Interface procedure for reading file data from a gadget */
-static ssize_t fifo_read(struct file *file, char *buffer, size_t count, loff_t *ppos)
-{
-  struct usb_vfdev *dev;
-
-  dev = (struct usb_vfdev *)file->private_data;
-  return read_common(file, buffer, count, ppos,
-		     dev->bulk_in_buffer,
-		     dev->bulk_in_size,
-		     dev->bulk_in_epaddr);
-}
-
 /* Handles a finished bulk write request */
 static void vdev_write_bulk_callback(struct urb *urb)
 {
@@ -368,6 +370,114 @@ static ssize_t cmd_write(struct file *file, const char *user_buffer, size_t coun
 	usb_free_urb(urb);
 
 	return writesize;
+}
+
+/* Add a given URB to the queue */
+static int vfdev_urb_offer(struct usb_vfdev *dev, struct urb *urb)
+{
+  struct buf_entry *queue;
+  struct buf_entry *entry;
+  int rc;
+
+  if (down_interruptible(&dev->mutex) == 0) {
+    /* Make a new queue entry */
+    entry = kmalloc(sizeof struct buf_entry, GFP_KERNEL);
+    if (entry != NULL) {
+      etnry->dev = urb->dev;
+      entry->transfer_buffer = urb->transfer_buffer;
+      entry->transfer_dma = urb->transfer_dma;
+      entry->transfer_buffer_length = urb->transfer_buffer_length;
+      entry->actual_length = urb->actual_length;
+      etnry->next = NULL;
+      rc = 0;
+    } else {
+      err("Unable to allocate a read queue entry");
+      rc = -ENOMEM;
+    }
+
+    /* Offer the entry to the queue */
+    if (rc == 0) {
+      if (dev->queue != NULL) {
+	queue = dev->queue;
+	while (queue->next != NULL) {
+	  queue = queue->next;
+	}
+	queue->next = entry;
+      } else {
+	dev->queue = entry;
+      }
+    }
+    up(&dev->mutex);
+    return rc;
+  } else {
+    return -ERESTARTSYS;
+  }
+}
+
+/* Handles a finished read-ahead request */
+static void vfdev_bulk_read_callback(struct urb *urb)
+{
+  struct usb_vfdev *dev;
+
+  if (urb->status && 
+      !(urb->status == -ENOENT || 
+	urb->status == -ECONNRESET ||
+	urb->status == -ESHUTDOWN)) {
+    dbg("%s - nonzero write bulk status received: %d",
+	__FUNCTION__, urb->status);
+  } else {
+    vfdev_urb_offer((struct usb_vdev *)urb->context, urb);
+  }
+}
+
+/* Takes one URB from the head of the queue */
+static int vfdev_buf_take(struct usb_vfdev *dev,
+			  struct buf_entry **entry)
+{
+  struct urb_entry *next;
+  int rc;
+  
+  if (down_interruptible(&dev->mutex) == 0) {
+    /* Wait for the next available URB */
+    rc = down_interruptible(&dev->limit_sem);
+    if (rc == 0) {
+      *buf = dev->queue;
+      next = dev->queue->next;
+      kfree(dev->queue);
+      dev->queue = next;
+      rc = 0;
+    } else {
+      rc = -ERESTARTSYS;
+    }
+    up(&dev->mutex);
+    return rc;
+  } else {
+    return -ERESTARTSYS;
+  }
+}
+
+/* Interface procedure for reading file data from a gadget */
+static ssize_t fifo_read(struct file *file, char *buffer, size_t count, loff_t *ppos)
+{
+  struct usb_vfdev *dev;
+  struct buf_entry *entry;
+  int rc;
+
+  dev = (struct usb_vfdev *)file->private_data;
+
+  /* Take the next URB from the queue */
+  if ((rc = vfdev_urb_take(dev, &entry)) == 0) {
+    if ((rc = copy_to_user(buffer,
+			   entry->transfer_buffer,
+			   entry->actual_length)) == NULL) {
+      rc = entry->actual_length;
+    }
+    /* Free up the allocated buffer(s) */
+    usb_buffer_free(entry->dev, entry->transfer_buffer_length, 
+		    entry->transfer_buffer, entry->transfer_dma);
+  }
+
+  return rc;
 }
 
 /* Command-status I/O and class device file operations */
@@ -515,7 +625,9 @@ static int vfdev_probe(struct usb_interface *interface, const struct usb_device_
 	        return -ENOMEM;
 	}
 	kref_init(&dev->kref);
-	sema_init(&dev->limit_sem, maxreads);
+	sema_init(&dev->limit_sem, 0);
+	sema_init(&dev->mutex, 1);
+	dev->queue = NULL;
 
 	dev->udev = usb_get_dev(interface_to_usbdev(interface));
 	dev->interface = interface;
