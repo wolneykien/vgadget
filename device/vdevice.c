@@ -21,6 +21,7 @@
 #include <linux/usb.h>
 #include <linux/poll.h>
 #include <asm/atomic.h>
+#include <linux/wait.h>
 
 /* Various macros */
 #define info(format, arg...) \
@@ -136,6 +137,7 @@ struct usb_vfdev {
   /* The read-ahead process data */
   int read_ahead_pid;
   atomic_t read_ahead_status;
+  wait_queue_head_t fifo_wait;
   struct completion read_ahead_notifier;
 };
 #define to_vfdev(d) container_of(d, struct usb_vfdev, kref)
@@ -396,11 +398,13 @@ static int vfdev_urb_offer(struct usb_vfdev *dev, struct urb *urb)
     /* Make a new queue entry */
     entry = kmalloc(sizeof struct buf_entry, GFP_KERNEL);
     if (entry != NULL) {
-      /* Offer the new entry to the queue*/
-      up(&dev->queue_sem);
+      /* Offer the new entry to the queue */
       etnry->urb = urb;
       etnry->next = NULL;
       rc = 0;
+      /* Send notifications */
+      up(&dev->queue_sem);
+      wake_up(&dev->fifo_wait);
     } else {
       err("Unable to allocate a read queue entry");
       rc = -ENOMEM;
@@ -600,7 +604,11 @@ static int vfdev_poll(struct file *filp, poll_table *wait)
   if (down_interruptible(&dev->mutex) == 0) { //TODO: use an R/W mutex
     rc = 0;
     if (dev->queue != NULL) {
+      /* Indicate that some data is ready for reading */
       rc |= (POLLIN | POLLRDNORM);
+    } else {
+      /* Add the FIFO wait-queue to the poll table */
+      poll_wait(filp, &dev->fifo_wait, wait);
     }
     up(&dev->mutex);
     return rc;
@@ -831,6 +839,7 @@ static int vfdev_probe(struct usb_interface *interface, const struct usb_device_
 	sema_init(&dev->limit_sem, maxreads);
 	sema_init(&dev->queue_sem, 0);
 	sema_init(&dev->mutex, 1);
+	init_waitqueue_head(&dev->fifo_wait);
 	dev->queue = NULL;
 
 	dev->udev = usb_get_dev(interface_to_usbdev(interface));
