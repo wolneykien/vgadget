@@ -131,6 +131,9 @@ struct usb_vfdev {
   unsigned char *bulk_in_buffer;
   size_t bulk_in_size;
   __u8 bulk_in_epaddr;
+  /* The read-ahead process data */
+  int read_ahead_pid;
+  struct completion read_ahead_notifier;
 };
 #define to_vfdev(d) container_of(d, struct usb_vfdev, kref)
 
@@ -662,6 +665,68 @@ static int vdev_probe(struct usb_interface *interface, const struct usb_device_i
 	return 0;
 }
 
+/* The read-ahead process procedure */
+static int vfdev_read_ahead_loop(void *context)
+{
+  static struct usb_vfdev *dev;
+  sigset_t signal_mask;
+  int rc;
+
+  dev = (struct usb_vfdev *)context;
+
+  /* Allow the thread to be killed by a signal, but set the signal mask
+   * to block everything but INT, TERM, KILL, and USR1. */
+  siginitsetinv(&signal_mask,
+		sigmask(SIGINT) \
+		| sigmask(SIGTERM) \
+		| sigmask(SIGKILL) \
+		| sigmask(SIGUSR1));
+  sigprocmask(SIG_SETMASK, &signal_mask, NULL);
+
+  do {
+    rc = fifo_read_enqueue(dev);
+  } while (rc == 0);
+
+  dbg("Read ahead process finished (%d)", __FUNCTION__, rc);
+  complete_and_exit(&dev->read_ahead_notifier, rc);
+
+  return rc;
+}
+
+/* Starts the read-ahead loop */
+static int vfdev_read_ahead_start(struct urb_vfdev *dev)
+{
+  int rc;
+
+  dbg("Set up the read-ahead thread", __FUNCTION__, urb->status);
+  rc = kernel_thread(vfdev_read_ahead_loop,
+		     dev,
+		     (CLONE_VM | CLONE_FS | CLONE_FILES));
+  if (rc >= 0) {
+    dev->read_ahead_pid = rc;
+    rc = 0;
+  }
+
+  if (rc == 0) {
+    dbg("Read ahead thread pid: %d\n", __FUNCTION__,
+	dev->read_ahead_pid);
+  }
+
+  return rc;
+}
+
+/* Interrupts (and terminates) the read-ahead loop */
+static int vfdev_read_ahead_stop(struct usb_vfdev *dev)
+{
+  int rc;
+
+  rc =  kill_pid(dev->read_ahead_pid, SIGUSR1, SEND_SIG_FORCED);
+  /* Wait for the read-ahead process to terminate */
+  wait_for_completion(&dev->read_ahead_notifier);
+
+  return rc;
+}
+
 /* USB probbing procedure for the FIFO device */
 static int vfdev_probe(struct usb_interface *interface, const struct usb_device_id *id)
 {
@@ -738,7 +803,7 @@ static int vfdev_probe(struct usb_interface *interface, const struct usb_device_
 	dev_info(&interface->dev,
 		 "USB Versatile device FIFO intarface "
 	         "is now attached to usbconsf%d", interface->minor);
-	return 0;
+	return vfdev_read_ahead_start(dev);
 }
 
 /* Handles a USB device disconnect event */
@@ -777,6 +842,7 @@ static void vdev_disconnect(struct usb_interface *interface)
 /* Handles a USB FIFO device disconnect event */
 static void vfdev_disconnect(struct usb_interface *interface)
 {
+  vfdev_read_ahead_stop((struct usb_fdev *)usb_get_intfdata(interface));
   disconnect_common(interface, &vfdev_class, vfdev_delete);
 }
 
