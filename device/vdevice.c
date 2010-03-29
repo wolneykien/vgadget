@@ -412,6 +412,18 @@ static int vfdev_urb_offer(struct usb_vfdev *dev, struct urb *urb)
   }
 }
 
+/* Free a given URB */
+static void free_urb(struct urb *urb)
+{
+  /* Free up the allocated buffer(s) */
+  if (urb->transfer_buffer != NULL || urb->transfer_dma != NULL) {
+    usb_buffer_free(urb->dev, urb->transfer_buffer_length, 
+		    urb->transfer_buffer, urb->transfer_dma);
+  }
+  /* Release the reference to the URB */
+  usb_free_urb(urb);
+}
+
 /* Handles a finished read-ahead request */
 static void vfdev_bulk_read_callback(struct urb *urb)
 {
@@ -424,7 +436,10 @@ static void vfdev_bulk_read_callback(struct urb *urb)
     dbg("%s - nonzero write bulk status received: %d",
 	__FUNCTION__, urb->status);
   } else {
-    vfdev_urb_offer((struct usb_vdev *)urb->context, urb);
+    if (vfdev_urb_offer((struct usb_vdev *)urb->context, urb) != 0) {
+      err("Unable to offer the urb. Free in up");
+      free_urb(urb);
+    }
     up(&dev->limit_sem);
   }
 }
@@ -440,7 +455,6 @@ static int fifo_read_enqueue(struct usb_vfdev *dev)
     /* Create an urb, and a buffer for it, and copy the data to the urb */
     urb = usb_alloc_urb(0, GFP_KERNEL);
     if (urb == NULL) {
-      up(&dev->limit_sem);
       rc = -ENOMEM;
     }
     if (rc == 0) {
@@ -449,8 +463,6 @@ static int fifo_read_enqueue(struct usb_vfdev *dev)
 			     GFP_KERNEL,
 			     &urb->transfer_dma);
       if (buf == NULL) {
-	usb_free_urb(urb);
-	up(&dev->limit_sem);
 	rc = -ENOMEM;
       }
     }
@@ -462,15 +474,18 @@ static int fifo_read_enqueue(struct usb_vfdev *dev)
 			dev);
       urb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
       /* send the read request */
-      rc = usb_submit_urb(urb, GFP_KERNEL);
+      if ((rc = usb_submit_urb(urb, GFP_KERNEL)) != 0) {
+	err("%s - failed submitting read urb, error %d",
+	    __FUNCTION__,
+	    retval);
+      }
     }
-    if (rc == 0) {
-      err("%s - failed submitting read urb, error %d",
-	  __FUNCTION__,
-	  retval);
-      usb_buffer_free(dev->udev, READ_BUF_SIZE, buf,
-		      urb->transfer_dma);
-      usb_free_urb(urb);
+
+    if (rc != 0) {
+      /* Cleanup on error */
+      if (urb != NULL) {
+	free_urb(urb);
+      }
       up(&dev->limit_sem);
     }
     return rc;
@@ -516,16 +531,13 @@ static ssize_t fifo_read(struct file *file, char *buffer, size_t count, loff_t *
 
   /* Take the next URB from the queue */
   if ((rc = vfdev_urb_take(dev, &urb)) == 0) {
+    // TODO: copy via DMA
     if ((rc = copy_to_user(buffer,
 			   urb->transfer_buffer,
 			   urb->actual_length)) == NULL) {
       rc = urb->actual_length;
     }
-    /* Free up the allocated buffer(s) */
-    usb_buffer_free(urb->dev, urb->transfer_buffer_length, 
-		    urb->transfer_buffer, urb->transfer_dma);
-    /* Release the reference to the URB */
-    usb_free_urb(urb);
+    free_urb(urb);
   }
 
   return rc;
