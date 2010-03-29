@@ -72,6 +72,11 @@ MODULE_PARM_DESC(maxwrites,
 		 "The maximal number of write requests "
 		 "in the queue");
 
+/* The maximal number of read requests in the queue */
+static int maxreads = 4;
+module_param_named(maxreads, maxreads, int, S_IRUGO);
+MODULE_PARM_DESC(maxreads, "The number of read-ahead buffers");
+
 /* Common structure to hold working data of the devices */
 struct usb_vdev_common {
   /* general params */
