@@ -64,7 +64,13 @@ MODULE_PARM_DESC(minor, "USB interface base minor number");
 
 /* Define limits */
 #define MAX_TRANSFER		( PAGE_SIZE - 512 )
-#define WRITES_IN_FLIGHT	8
+
+/* The maximal number of write requests in the queue */
+static int maxwrites = 4;
+module_param_named(maxwrites, maxwrites, int, S_IRUGO);
+MODULE_PARM_DESC(maxwrites,
+		 "The maximal number of write requests "
+		 "in the queue");
 
 /* Common structure to hold working data of the devices */
 struct usb_vdev_common {
@@ -100,6 +106,8 @@ struct usb_vfdev {
   /* USB params */
   struct usb_device *udev;
   struct usb_interface *interface;
+  /* limiting the number of reads in progress */
+  struct semaphore limit_sem;
   /* the buffer to receive data */
   unsigned char *bulk_in_buffer;
   size_t bulk_in_size;
@@ -414,7 +422,7 @@ static int vdev_probe(struct usb_interface *interface, const struct usb_device_i
 	        return -ENOMEM;
 	}
 	kref_init(&dev->kref);
-	sema_init(&dev->limit_sem, WRITES_IN_FLIGHT);
+	sema_init(&dev->limit_sem, maxwrites);
 
 	dev->udev = usb_get_dev(interface_to_usbdev(interface));
 	dev->interface = interface;
