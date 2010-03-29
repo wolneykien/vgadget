@@ -20,6 +20,7 @@
 #include <asm/uaccess.h>
 #include <linux/usb.h>
 #include <linux/poll.h>
+#include <asm/atomic.h>
 
 /* Various macros */
 #define info(format, arg...) \
