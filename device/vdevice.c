@@ -438,7 +438,6 @@ static void vfdev_bulk_read_callback(struct urb *urb)
       err("Unable to offer the urb. Free in up");
       free_urb(urb);
     }
-    up(&dev->limit_sem);
   }
 }
 
@@ -507,6 +506,8 @@ static int vfdev_buf_take(struct usb_vfdev *dev,
       next = dev->queue->next;
       kfree(dev->queue);
       dev->queue = next;
+      /* Invite the read-ahead procedure to continue */
+      up(&dev->limit_sem);
       rc = 0;
     } else {
       rc = -ERESTARTSYS;
