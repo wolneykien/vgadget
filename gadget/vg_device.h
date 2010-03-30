@@ -32,6 +32,7 @@ struct vg_thread_ctl {
         unsigned long		state;
         struct semaphore        mutex;
         struct semaphore        limit;
+        wait_queue_head_t       wait;
 };
 
 /* A request queue entry */

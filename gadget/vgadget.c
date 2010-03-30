@@ -1059,22 +1059,65 @@ static void vg_disconnect(struct usb_gadget *gadget)
  * Implementation section. Bulk endpoint procedures
  */
 
-/* Handles a finished request of a bulk-in endpoint */
-static void bulk_complete(struct usb_ep *ep, struct usb_request *req)
+/* Add a given URS request to a given queue */
+static int vfdev_urb_offer(struct vg_thread_ctl *proc_ctl,
+			   struct vg_req_entry **queue_head,
+			   struct semaphore *queue_sem,
+			   struct urs_request *req)
 {
-	struct vg_dev		*vg = (struct vg_dev *) ep->driver_data;
-	struct vg_buffhd	*bh = (struct vg_buffhd *) req->context;
+  struct vg_req_entry *queue;
+  struct vg_req_entry *entry;
+  int rc;
 
-	if (req->status || req->actual != req->length)
-		DBG(vg, "%s --> %d, %u/%u\n", __FUNCTION__,
-				req->status, req->actual, req->length);
-	if (req->status == -ECONNRESET)		// Request was cancelled
-		usb_ep_fifo_flush(ep);
+  if (down_interruptible(&proc_ctl->mutex) == 0) {
+    /* Make a new queue entry */
+    entry = kmalloc(sizeof struct vg_req_entry, GFP_KERNEL);
+    if (entry != NULL) {
+      /* Offer the new entry to the queue */
+      etnry->req = req;
+      etnry->next = NULL;
+      rc = 0;
+      /* Send notifications */
+      up(queue_sem);
+      wake_up(&proc_ctl->wait);
+    } else {
+      err("Unable to allocate a queue entry");
+      rc = -ENOMEM;
+    }
 
-	/* Hold the lock while we update the request and buffer states */
-	// TODO: lock ?
-	bh->state = BUF_STATE_EMPTY; // TODO: STATE_FULL
-	wakeup_thread(vg); // TODO: submit next buffer?
+    /* Offer the entry to the queue */
+    if (rc == 0) {
+      if (*queue_head != NULL) {
+	queue = *queue_head;
+	while (queue->next != NULL) {
+	  queue = queue->next;
+	}
+	queue->next = entry;
+      } else {
+	*queue_head = entry;
+      }
+    }
+    up(&proc_ctl->mutex);
+    return rc;
+  } else {
+    return -ERESTARTSYS;
+  }
+}
+
+/* Handles a finished request of a bulk-in (CMD) endpoint */
+static void cmd_complete(struct usb_ep *ep, struct usb_request *req)
+{
+  struct vg_dev *vg = (struct vg_dev *) ep->driver_data;
+
+  ep_complete_common(ep, req);
+  if (cmd_request_offer(&vg->cmd_read,
+			&vg->cmd_queue,
+			&vg->cmd_queue_sem,
+			req) != 0) {
+    MERROR("Unable to enqueue the finished request for endpoint %s\n",
+	   ep->name);
+    free_request(ep, req);
+  }
 }
 
 /* Makes bulk-out requests be divisible by the maxpacket size */
