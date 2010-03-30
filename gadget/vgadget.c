@@ -401,9 +401,6 @@ static int __init vg_init(void)
 	  rc = usb_gadget_register_driver(&vg_driver);
 	  if (rc == 0) {
 	    set_bit(REGISTERED, &the_vg->flags);
-	    /* Tell the thread to start working */
-	    MDBG("Tell the thread to start working\n");
-	    complete(&the_vg->thread_ctl.thread_notifier);
 	  } else {
 	    vg_free(the_vg);
 	    MERROR("Unable to register driver\n");
@@ -433,9 +430,10 @@ static void __exit vg_cleanup(void)
 	}
 
 	/* Wait for the thread to finish up */
-	wakeup_thread(vg);
-	MDBG("Wait for the thread to finish up\n");
-	wait_for_completion(&vg->thread_ctl.thread_notifier);
+	MDBG("Wait for the CMD thread to finish up\n");
+	wait_for_completion(&vg->cmd_read.thread_notifier);
+	MDBG("Wait for the FILE thread to finish up\n");
+	wait_for_completion(&vg->file_send.thread_notifier);
 
 	vg_free(vg);
 }
