@@ -599,56 +599,9 @@ static int __init vg_bind(struct usb_gadget *gadget)
 	}
 
 	if (rc == 0) {
-	  /* Allocate the request and buffer for endpoint 0 */
-	  DBG(vg, "Allocate the request and buffer for endpoint 0\n");
-	  rc = -ENOMEM;
-	  vg->ep0_req = usb_ep_alloc_request(vg->ep0, GFP_KERNEL);
-	  if (vg->ep0_req) {
-	    rc = vg_allocate_request_buffer(vg->ep0,
-					    vg->ep0_req,
-					    EP0_BUFSIZE,
-					    GFP_KERNEL);
-	    if (rc == 0) {
-	      vg->ep0_req->complete = ep0_complete;
-	    } else {
-	      ERROR(vg, "Unable to allocate a buffer for endpoint 0\n");
-	    }
-	  } else {
-	    ERROR(vg, "Unable to allocate a request object for ep0\n");
-	  }
-	}
-
-	if (rc == 0) {
 	  /* This should reflect the actual gadget power source */
 	  DBG(vg, "Claim gadget as self-powered\n");
 	  usb_gadget_set_selfpowered(gadget);
-	}
-
-	/* Initialize the queues */
-	DBG(vg, "Initialize the queues\n");
-	vg_init_requests(&vg->out_bufq, vg->bulk_out);
-	vg_init_requests(&vg->in_bufq, vg->bulk_in);
-	vg_init_requests(&vg->status_in_bufq, vg->bulk_status_in);
-
-	if (rc == 0) {
-	  /* Setup the main thread */
-	  DBG(vg, "Set up the main thread\n");
-	  rc = kernel_thread(vg_main_thread,
-			     vg,
-			     (CLONE_VM | CLONE_FS | CLONE_FILES));
-	  if (rc >= 0) {
-	    vg->thread_ctl.thread_pid = rc;
-	    rc = 0;
-	  }
-
-	  if (rc == 0) {
-	    INFO(vg, DRIVER_DESC ", version: " DRIVER_VERSION "\n");
-	    INFO(vg, "VendorID=x%04x, ProductID=x%04x, Release=x%04x\n",
-		 mod_data.vendor, mod_data.product, mod_data.release);
-	    DBG(vg, "I/O thread pid: %d\n", vg->thread_ctl.thread_pid);
-	  } else {
-	    ERROR(vg, "Error while allocating the main thread\n");
-	  }
 	}
 
 	return rc;

@@ -50,7 +50,6 @@ struct vg_dev {
 
         /* Endpoints */
 	struct usb_ep		*ep0;
-        struct usb_request	*ep0_req;
 	struct usb_ep		*bulk_out;
 	struct usb_ep		*bulk_in;
         struct usb_ep		*bulk_status_in;
