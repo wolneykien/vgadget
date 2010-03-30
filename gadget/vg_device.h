@@ -79,12 +79,12 @@ struct vg_dev {
 
         /* Read/send-ahead processes */
         struct vg_thread_ctl    cmd_read;
-        struct semaphore        cmd_limit_sem;
-        struct semaphore        cmd_queue_sem;
+        struct semaphore        read_limit;
         struct semaphore        cmd_mutex;
         struct vg_req_entry     *cmd_queue;
+        struct semaphore        cmd_queue_sem;
         struct vg_thread_ctl    file_send;
-        struct semaphore        file_limit;
+        struct semaphore        send_limit;
         struct semaphore        file_mutex;
 };
 

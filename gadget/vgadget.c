@@ -456,8 +456,12 @@ static int __init vg_alloc(struct vg_dev **vg)
 	if (vg) {
 	  memset(*vg, 0, sizeof *vg);
 	  MDBG("Allocate locks and semaphores\n");
-	  rwlock_init(&(*vg)->state_lock);
 	  init_MUTEX(&(*vg)->exception_sem);
+	  init_MUTEX(&(*vg)->cmd_mutex);
+	  init_MUTEX(&(*vg)->file_mutex);
+	  sema_init(&(*vg)->read_limit, maxreads);
+	  sema_init(&(*vg)->cmd_queue_sem, 0);
+	  sema_init(&(*vg)->send_limit, maxwrites);
 	  MDBG("Allocate and init the gadget device thread wait queue\n");
 	  init_completion(&(*vg)->thread_ctl.thread_notifier);
 	  rc = 0;
