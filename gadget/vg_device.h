@@ -27,8 +27,11 @@
 
 /* A thread control structure */
 struct vg_thread_ctl {
-	struct completion	thread_notifier;
-	int			thread_pid;
+	struct completion	completion;
+	int			pid;
+        atomic_t                state;
+        struct semaphore        mutex;
+        struct semaphore        limit;
 };
 
 /* A request queue entry */
@@ -45,7 +48,6 @@ struct vg_dev {
         /* State and control */
         u8			config;
 	volatile unsigned int	req_tag;
-        atomic_t                state;
         unsigned long		flags;
 
         /* Endpoints */
@@ -56,13 +58,9 @@ struct vg_dev {
 
         /* Read/send-ahead processes */
         struct vg_thread_ctl    cmd_read;
-        struct semaphore        read_limit;
-        struct semaphore        cmd_mutex;
         struct vg_req_entry     *cmd_queue;
         struct semaphore        cmd_queue_sem;
         struct vg_thread_ctl    file_send;
-        struct semaphore        send_limit;
-        struct semaphore        file_mutex;
 };
 
 /* Constatns for state flags */

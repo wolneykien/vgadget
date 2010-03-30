@@ -427,12 +427,6 @@ static void __exit vg_cleanup(void)
 	  usb_gadget_unregister_driver(&vg_driver);
 	}
 
-	/* Wait for the thread to finish up */
-	MDBG("Wait for the CMD thread to finish up\n");
-	wait_for_completion(&vg->cmd_read.thread_notifier);
-	MDBG("Wait for the FILE thread to finish up\n");
-	wait_for_completion(&vg->file_send.thread_notifier);
-
 	vg_free(vg);
 }
 /* Set up the module exit handler */
@@ -453,15 +447,14 @@ static int __init vg_alloc(struct vg_dev **vg)
 	*vg = kmalloc(sizeof *vg, GFP_KERNEL);
 	if (vg) {
 	  memset(*vg, 0, sizeof *vg);
-	  MDBG("Allocate locks and semaphores\n");
-	  init_MUTEX(&(*vg)->exception_sem);
-	  init_MUTEX(&(*vg)->cmd_mutex);
-	  init_MUTEX(&(*vg)->file_mutex);
-	  sema_init(&(*vg)->read_limit, maxreads);
+	  MDBG("Allocate synchronization objects\n");
+	  init_MUTEX(&(*vg)->cmd_read.mutex);
+	  init_MUTEX(&(*vg)->file_send.mutex);
+	  sema_init(&(*vg)->cmd_read.limit, maxreads);
 	  sema_init(&(*vg)->cmd_queue_sem, 0);
-	  sema_init(&(*vg)->send_limit, maxwrites);
-	  MDBG("Allocate and init the gadget device thread wait queue\n");
-	  init_completion(&(*vg)->thread_ctl.thread_notifier);
+	  sema_init(&(*vg)->file_send.limit, maxwrites);
+	  init_completion(&(*vg)->cmd_read.completion);
+	  init_completion(&(*vg)->file_send.completion);
 	  rc = 0;
 	} else {
 	  rc = -ENOMEM;
@@ -607,6 +600,30 @@ static int __init vg_bind(struct usb_gadget *gadget)
 	return rc;
 }
 
+/* Stops the CMD read-ahead process */
+static int vg_cmd_read_ahead_stop(struct vg_dev *vg)
+{
+  int rc;
+
+  rc = 0; //TODO: write an implementation
+  atomic_set(&vg->cmd_read.state, 1);
+  wait_for_completion(&vg->cmd_read.completion);
+
+  return rc;
+}
+
+/* Stops the FILE send-ahead process */
+static int vg_file_send_ahead_stop(struct vg_dev *vg)
+{
+  int rc;
+
+  rc = 0; //TODO: write an implementation
+  atomic_set(&vg->file_send.state, 1);
+  wait_for_completion(&vg->file_send.completion);
+
+  return rc;
+}
+
 /* Unbind procedure implementation */
 static void vg_unbind(struct usb_gadget *gadget)
 {
@@ -614,32 +631,9 @@ static void vg_unbind(struct usb_gadget *gadget)
 
 	clear_bit(REGISTERED, &vg->flags);
 
-	/* If the thread isn't already dead, tell it to exit now */
-	if (!is_terminated(vg)) {
-	  DBG(vg, "Tell the main thread to exit and wait for it\n");
-		raise_exception(vg, VG_STATE_EXIT);
-		DBG(vg, "Wait for the thread task completion\n");
-		wait_for_completion(&vg->thread_ctl.thread_notifier);
-
-		/* The cleanup routine waits for this completion also */
-		complete(&vg->thread_ctl.thread_notifier);
-	}
-
-	/* Free the data buffers */
-	DBG(vg, "Free data buffers\n");
-	vg_free_requests(&vg->out_bufq, vg->bulk_out);
-	vg_free_requests(&vg->in_bufq, vg->bulk_in);
-	vg_free_requests(&vg->status_in_bufq, vg->bulk_status_in);
-
-	/* Free the request and a buffer for endpoint 0 */
-	if (vg->ep0_req) {
-	  if (vg->ep0_req->buf) {
-	    DBG(vg, "Free ep 0 buffer\n");
-	    vg_free_request_buffer(vg->ep0, vg->ep0_req, EP0_BUFSIZE);
-	  }
-	  DBG(vg, "Free ep 0 request\n");
-	  usb_ep_free_request(vg->ep0, vg->ep0_req);
-	}
+	/* Stop the ahead-working processes */
+	vg_cmd_read_ahead_stop(vg);
+	vg_file_send_ahead_stop(vg);
 
 	set_gadget_data(gadget, NULL);
 }
