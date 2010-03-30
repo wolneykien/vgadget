@@ -27,11 +27,8 @@
 
 /* A thread control structure */
 struct vg_thread_ctl {
-	int			thread_wakeup_needed;
 	struct completion	thread_notifier;
 	int			thread_pid;
-	struct task_struct	*thread_task;
-	sigset_t		thread_signal_mask;
 };
 
 /* The set of gadget states */
@@ -49,6 +46,12 @@ enum vg_state {
 	VG_STATE_DATA_PHASE,
 	VG_STATE_STATUS_PHASE,
 };
+
+/* A request queue entry */
+struct vg_req_entry {
+  struct usb_request *req;
+  struct vg_req_entry *next;
+}
 
 /* A gadget device structure */
 struct vg_dev {
@@ -74,13 +77,14 @@ struct vg_dev {
 	struct usb_ep		*bulk_in;
         struct usb_ep		*bulk_status_in;
 
-        /* Buffer queues */
-        struct vg_buffer_queue  out_bufq;
-        struct vg_buffer_queue  in_bufq;
-        struct vg_buffer_queue  status_in_bufq;
-
-        /* Thread control */
-        struct vg_thread_ctl    thread_ctl;
+        /* Read/send-ahead processes */
+        struct vg_thread_ctl    cmd_read;
+        struct semaphore        cmd_limit_sem;
+        struct semaphore        cmd_queue_sem;
+        struct semaphore        cmd_mutex;
+        struct vg_req_entry     *cmd_queue;
+        struct vg_thread_ctl    file_send;
+        struct semaphore        file_limit;
 };
 
 /* Constatns for state flags */
