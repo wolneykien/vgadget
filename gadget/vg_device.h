@@ -85,6 +85,7 @@ struct vg_dev {
         struct vg_req_entry     *cmd_queue;
         struct vg_thread_ctl    file_send;
         struct semaphore        file_limit;
+        struct semaphore        file_mutex;
 };
 
 /* Constatns for state flags */
