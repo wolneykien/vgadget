@@ -29,7 +29,7 @@
 struct vg_thread_ctl {
 	struct completion	completion;
 	int			pid;
-        atomic_t                state;
+        unsigned long		state;
         struct semaphore        mutex;
         struct semaphore        limit;
 };

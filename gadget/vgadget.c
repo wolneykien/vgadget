@@ -600,14 +600,41 @@ static int __init vg_bind(struct usb_gadget *gadget)
 	return rc;
 }
 
+/* Starts the CMD read-ahead process */
+static int vg_cmd_read_ahead_start(struct vg_dev *vg)
+{
+  int rc;
+
+  rc = 0;
+  //TODO: write an implementation
+
+  return rc;
+}
+
 /* Stops the CMD read-ahead process */
 static int vg_cmd_read_ahead_stop(struct vg_dev *vg)
 {
   int rc;
 
-  rc = 0; //TODO: write an implementation
-  atomic_set(&vg->cmd_read.state, 1);
-  wait_for_completion(&vg->cmd_read.completion);
+  rc = 0;
+  /* Stop the process only if it is running */
+  if (test_and_set_bit(1, &vg->cmd_read.state) == 0) {
+    DBG(vg, "Stop the CMD read-ahead process\n");
+     //TODO: write an implementation
+    wait_for_completion(&vg->cmd_read.completion);
+    &vg->cmd_read.pid = 0;
+  }
+
+  return rc;
+}
+
+/* Starts the FILE send-ahead process */
+static int vg_file_send_ahead_start(struct vg_dev *vg)
+{
+  int rc;
+
+  rc = 0;
+  //TODO: write an implementation
 
   return rc;
 }
@@ -617,9 +644,26 @@ static int vg_file_send_ahead_stop(struct vg_dev *vg)
 {
   int rc;
 
-  rc = 0; //TODO: write an implementation
-  atomic_set(&vg->file_send.state, 1);
-  wait_for_completion(&vg->file_send.completion);
+  rc = 0;
+  /* Stop the process only if it is running */
+  if (test_and_set_bit(1, &vg->file_send.state) == 0) {
+    DBG(vg, "Stop the FILE send-ahead process\n");
+     //TODO: write an implementation
+    wait_for_completion(&vg->file_send.completion);
+    &vg->file_send.pid = 0;
+  }
+
+  return rc;
+}
+
+/* Stop all of the threads */
+static int vg_stop_processes(struct vg_dev *vg)
+{
+  int rc;
+  
+  rc = 0;
+  rc |= vg_cmd_read_ahead_stop(vg);
+  rc |= vg_file_send_ahead_stop(vg);
 
   return rc;
 }
@@ -632,8 +676,7 @@ static void vg_unbind(struct usb_gadget *gadget)
 	clear_bit(REGISTERED, &vg->flags);
 
 	/* Stop the ahead-working processes */
-	vg_cmd_read_ahead_stop(vg);
-	vg_file_send_ahead_stop(vg);
+	vg_stop_processes(vg);
 
 	set_gadget_data(gadget, NULL);
 }
@@ -660,10 +703,12 @@ static int class_setup_req(struct vg_dev *vg,
 	    break;
 	  }
 
-	  /* Raise an exception to stop the current operation
-	   * and reinitialize our state. */
+	  /* Reinitialize the transport processes */
 	  DBG(vg, "Bulk reset request\n");
-	  raise_exception(vg, VG_STATE_RESET);
+	  vg_cmd_read_ahead_stop(vg);
+	  vg_cmd_read_ahead_start(vg);
+	  vg_file_send_ahead_stop(vg);
+	  vg_file_send_ahead_start(vg);
 	  value = DELAYED_STATUS;
 	  break;
 	}
