@@ -375,8 +375,8 @@ MODULE_PARM_DESC(product_name, "Product name");
 module_param_named(serial, mod_data.serial, charp, S_IRUGO);
 MODULE_PARM_DESC(serial, "Gadget serial number");
 
-module_param_named(filename, mod_data.filename, charp, S_IRUGO);
-MODULE_PARM_DESC(filename, "File to read from");
+module_param_named(file, mod_data.filename, charp, S_IRUGO);
+MODULE_PARM_DESC(file, "File to read from");
 
 /* The gadget device object */
 static struct vg_dev *the_vg;
