@@ -96,7 +96,6 @@ static struct {
 
 /* Endpoint 0 buffer size */
 #define EP0_BUFSIZE 1024
-#define DELAYED_STATUS  (EP0_BUFSIZE + 1000)   // An impossibly large value
 
 /* The gadget USB device descriptor */
 static struct usb_device_descriptor
@@ -490,6 +489,114 @@ static int __init autoconfig_endpoint(struct vg_dev *vg,
   return rc;
 }
 
+/* Allocates a new USB request and buffer */
+static int allocate_request(struct usb_ep *ep,
+			    int size,
+			    struct usb_request **req)
+{
+  int rc;
+
+  MDBG("Allocate a request for endpoint %s\n",
+       ep->name);
+  *req = usb_ep_alloc_request(ep, GFP_KERNEL);
+  if (*req == NULL) {
+    rc = -ENOMEM;
+    MERROR("Unable to allocate a request for endpoint %s\n", ep->name);
+  } else {
+    rc = 0;
+    (*req)->buf = NULL;
+    (*req)->dma = NULL;
+    (*req)->complete = NULL;
+    (*req)->length = 0;
+    (*req)->zero = 0;
+  }
+
+  if (rc == 0) {
+    MDBG("Allocate a buffer for the request of %d b\n", size);
+    (*req)->buf = kmalloc(size, GFP_KERNEL);
+    (*req)->dma = NULL; //TODO: use DMA pool
+    if (*req->buf == NULL) {
+      rc = -ENOMEM;
+      MERROR("Unable to allocate a buffer for the request\n");
+    } else {
+      rc = 0;
+      (*req)->length = size;
+    }
+  }
+
+  return rc;
+}
+
+/* Frees a given URB request and buffer */
+static int free_request(struct usb_ep *ep,
+			struct usb_request *req)
+{
+  int rc;
+
+  if (req->buf != NULL) {
+    MDBG("Free the buffer of a request for endpoint %s\n", ep->name);
+    kfree(buf); //TODO: some operations for DMA pool?
+    req->buf = NULL;
+    req->dma = NULL;
+  }
+  
+  MDBG("Free a request buffer for endpoint %s\n", ep->name);
+  usb_ep_free_request(ep, req);
+
+  rc = 0;
+  return rc;
+}
+
+/* Sets the size of the request data */
+static void set_request_length(struct urb_request *req,
+			       int len,
+			       int wlen)
+{
+  req->length = len;
+}
+
+/* Enqueues a URB request */
+static int enqueue_request(struct usb_ep *ep,
+			   struct urb_request *req,
+			   (*complete)(struct usb_ep *ep,
+				       struct usb_request *req))
+{
+  int rc;
+
+  struct vg_dev *vg;
+
+  vg = ep->driver_data;
+  DBG(vg, "Enqueue a request of size %d b for endpoint %s\n",
+      ep-name,
+      req->length);
+  req->complete = complete;
+  req->context = vg;
+  rc = usb_ep_queue(ep, req, GFP_ATOMIC);
+  if (rc != 0 && rc != -ESHUTDOWN) {
+    /* Can't do much more than wait for a reset */
+    WARN(vg, "Error in submission: %s --> %d\n",
+	 ep->name, rc);
+  }
+
+  return rc;
+}
+
+/* Handles a finished request of an endpoint */
+static void ep_complete_common(struct usb_ep *ep, struct usb_request *req)
+{
+  struct vg_dev *vg = (struct vg_dev *) req->context;
+
+  if (req->status || req->actual != req->length) {
+    WARN(vg, "Request completed with error: %d %u/%u\n",
+	 req->status, req->actual, req->length);
+  }
+
+  /* Request was cancelled */
+  if (req->status == -ECONNRESET) {
+    usb_ep_fifo_flush(ep);
+  }
+}
+
 
 
 /*
@@ -683,9 +790,13 @@ static void vg_unbind(struct usb_gadget *gadget)
 
 /* Class setup request processor */
 static int class_setup_req(struct vg_dev *vg,
-			   const struct usb_ctrlrequest *ctrl)
+			   const struct usb_ctrlrequest *ctrl,
+			   struct usb_request **res_req)
 {
 	int			value = -EOPNOTSUPP;
+
+	/* Initialize resulting request to NULL */
+	*res_req = NULL;
 
 	if (!vg->config) {
 	  ERROR(vg, "No configuration number specified\n");
@@ -705,10 +816,7 @@ static int class_setup_req(struct vg_dev *vg,
 
 	  /* Reinitialize the transport processes */
 	  DBG(vg, "Bulk reset request\n");
-	  vg_cmd_read_ahead_stop(vg);
-	  vg_cmd_read_ahead_start(vg);
-	  vg_file_send_ahead_stop(vg);
-	  vg_file_send_ahead_start(vg);
+	  //TODO: may not sleep, restart asynchronously
 	  value = DELAYED_STATUS;
 	  break;
 	}
@@ -767,16 +875,18 @@ static int populate_config_buf(struct usb_gadget *gadget,
 
 /* Standard setup request processor */
 static int standard_setup_req(struct vg_dev *vg,
-			      const struct usb_ctrlrequest *ctrl)
+			      const struct usb_ctrlrequest *ctrl,
+			      struct usb_request **res_req)
 {
-	struct usb_request	*req = vg->ep0_req;
 	int			value = -EOPNOTSUPP;
 	u16			wIndex = le16_to_cpu(ctrl->wIndex);
 	u16			wValue = le16_to_cpu(ctrl->wValue);
 	u16			wLength = le16_to_cpu(ctrl->wLength);
 
-	/* Usually this just stores reply data in the pre-allocated ep0 buffer,
-	 * but config change events will also reconfigure hardware. */
+	/* Initialize resulting request to NULL */
+	*res_req = NULL;
+
+	/* Parse the request */
 	switch (ctrl->bRequest) {
 
 	case USB_REQ_GET_DESCRIPTOR:
@@ -789,7 +899,8 @@ static int standard_setup_req(struct vg_dev *vg,
 		case USB_DT_DEVICE:
 			VDBG(vg, "Get device descriptor\n");
 			value = min(wLength, (u16) sizeof device_desc);
-			memcpy(req->buf, &device_desc, value);
+			allocate_request(vg->ep0, value, res_req);
+			memcpy((*res_req)->buf, &device_desc, value);
 			break;
 #ifdef CONFIG_USB_GADGET_DUALSPEED
 		case USB_DT_DEVICE_QUALIFIER:
@@ -797,7 +908,8 @@ static int standard_setup_req(struct vg_dev *vg,
 			if (!vg->gadget->is_dualspeed)
 				break;
 			value = min(wLength, (u16) sizeof dev_qualifier);
-			memcpy(req->buf, &dev_qualifier, value);
+			allocate_request(vg->ep0, value, res_req);
+			memcpy((*res_req)->buf, &dev_qualifier, value);
 			break;
 
 		case USB_DT_OTHER_SPEED_CONFIG:
@@ -807,22 +919,27 @@ static int standard_setup_req(struct vg_dev *vg,
 #endif
 		case USB_DT_CONFIG:
 			VDBG(vg, "Get configuration descriptor\n");
+			allocate_request(vg->ep0, EP0_BUFSIZE, res_req);
 			value = populate_config_buf(vg->gadget,
-					req->buf,
-					wValue >> 8,
-					wValue & 0xff);
+						    (*res_req)->buf,
+						    wValue >> 8,
+						    wValue & 0xff);
 			if (value >= 0)
 				value = min(wLength, (u16) value);
+			set_request_length(*res_req, value);
 			break;
 
 		case USB_DT_STRING:
 			VDBG(vg, "Get string descriptor\n");
 
 			/* wIndex == language code */
+			allocate_request(vg->ep0, EP0_BUFSIZE, res_req);
 			value = usb_gadget_get_string(&stringtab,
-					wValue & 0xff, req->buf);
+						      wValue & 0xff,
+						      *(res_req)->buf);
 			if (value >= 0)
 				value = min(wLength, (u16) value);
+			set_request_length(*res_req, value);
 			break;
 		}
 		break;
@@ -835,7 +952,7 @@ static int standard_setup_req(struct vg_dev *vg,
 			break;
 		if (wValue == CONFIG_VALUE || wValue == 0) {
 		  //vg->new_config = wValue;
-		  //TODO: setup new config
+		  //TODO: setup new config, may not sleep
 			value = DELAYED_STATUS;
 		}
 		break;
@@ -844,8 +961,9 @@ static int standard_setup_req(struct vg_dev *vg,
 		if (ctrl->bRequestType != (USB_DIR_IN | USB_TYPE_STANDARD |
 				USB_RECIP_DEVICE))
 			break;
-		*(u8 *) req->buf = vg->config;
 		value = min(wLength, (u16) 1);
+		allocate_request(vg->ep0, value, res_req);
+		*(u8 *) (*res_req)->buf = vg->config;
 		break;
 
 	case USB_REQ_SET_INTERFACE:
@@ -855,7 +973,7 @@ static int standard_setup_req(struct vg_dev *vg,
 			break;
 		if (vg->config && wIndex == 0) {
 		  //vg->new_config = wValue;
-		  //TODO: setup new interface
+		  //TODO: setup new interface, may not sleep
 			value = DELAYED_STATUS;
 		}
 		break;
@@ -870,8 +988,9 @@ static int standard_setup_req(struct vg_dev *vg,
 			value = -EDOM;
 			break;
 		}
-		*(u8 *) req->buf = 0;
 		value = min(wLength, (u16) 1);
+		allocate_request(vg->ep0, value, res_req);
+		*(u8 *) (*res_req)->buf = 0;
 		break;
 
 	default:
@@ -884,35 +1003,11 @@ static int standard_setup_req(struct vg_dev *vg,
 	return value;
 }
 
-/* Enqueues the request of endpoint zero */
-static int ep0_queue(struct vg_dev *vg)
-{
-	int	rc;
-
-	rc = usb_ep_queue(vg->ep0, vg->ep0_req, GFP_ATOMIC);
-	if (rc != 0 && rc != -ESHUTDOWN) {
-	  /* We can't do much more than wait for a reset */
-	  WARN(vg, "Error in submission: %s --> %d\n",
-	       vg->ep0->name, rc);
-	}
-	return rc;
-}
-
-/* Handles a finished request of endpoint zero */
+/* Handles a finished request of an endpoint zero */
 static void ep0_complete(struct usb_ep *ep, struct usb_request *req)
 {
-	struct vg_dev *vg = (struct vg_dev *) ep->driver_data;
-
-	if (req->actual > 0)
-		dump_msg(vg, "ep0-req", req->buf, req->actual);
-	if (req->status || req->actual != req->length)
-		DBG(vg, "%s --> %d, %u/%u\n", __FUNCTION__,
-				req->status, req->actual, req->length);
-	if (req->status == -ECONNRESET)		// Request was cancelled
-		usb_ep_fifo_flush(ep);
-
-	if (req->status == 0 && req->context)
-		((vg_dev_proc_t) (req->context))(vg);
+  ep_complete_common(ep, req);
+  free_request(ep, req);
 }
 
 /* Setup the gadget parameters from the given control request */
@@ -920,6 +1015,7 @@ static int vg_setup(struct usb_gadget *gadget,
 		const struct usb_ctrlrequest *ctrl)
 {
 	struct vg_dev *vg = get_gadget_data(gadget);
+	struct usb_request *res_req;
 	int rc;
 
 	++vg->req_tag;		// Record arrival of a new request
@@ -930,19 +1026,18 @@ static int vg_setup(struct usb_gadget *gadget,
 
 	if ((ctrl->bRequestType & USB_TYPE_MASK) == USB_TYPE_CLASS) {
 	  DBG(vg, "Class setup request\n");
-	  rc = class_setup_req(vg, ctrl);
+	  rc = class_setup_req(vg, ctrl, &res_req);
 	} else {
 	  DBG(vg, "Standard setup request\n");
-	  rc = standard_setup_req(vg, ctrl);
+	  rc = standard_setup_req(vg, ctrl, &res_req);
 	}
 
-	/* Respond with data/status or defer until later? */
-	if (rc >= 0 && rc != DELAYED_STATUS) {
-		vg->ep0_req->length = rc;
-		vg->ep0_req->zero = (rc < le16_to_cpu(ctrl->wLength) &&
-				     (rc % gadget->ep0->maxpacket) == 0);
-		DBG(vg, "Respond with data/status\n");
-		rc = ep0_queue(vg);
+	/* Send a response if one it ready */
+	if (res_req != NULL) {
+	  DBG(vg, "Respond with data/status\n");
+	  if ((rc = enqueue_request(vg->ep0, res_req, ep0_complete)) != 0) {
+	    ERROR(vg, "Unable to submit a response to a setup request\n");
+	  }
 	}
 
 	/* Device either stalls (rc < 0) or reports success */
@@ -955,7 +1050,10 @@ static void vg_disconnect(struct usb_gadget *gadget)
 	struct vg_dev *vg = get_gadget_data(gadget);
 
 	DBG(vg, "Disconnect or port reset\n");
-	raise_exception(vg, VG_STATE_DISCONNECT);
+	vg_cmd_read_ahead_stop(vg);
+	vg_cmd_read_ahead_start(vg);
+	vg_file_send_ahead_stop(vg);
+	vg_file_send_ahead_start(vg);
 }
 
 
