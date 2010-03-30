@@ -834,11 +834,8 @@ static int standard_setup_req(struct vg_dev *vg,
 				USB_RECIP_DEVICE))
 			break;
 		if (wValue == CONFIG_VALUE || wValue == 0) {
-			vg->new_config = wValue;
-
-			/* Raise an exception to wipe out previous transaction
-			 * state (queued bufs, etc) and set the new config. */
-			raise_exception(vg, VG_STATE_CONFIG_CHANGE);
+		  //vg->new_config = wValue;
+		  //TODO: setup new config
 			value = DELAYED_STATUS;
 		}
 		break;
@@ -857,11 +854,8 @@ static int standard_setup_req(struct vg_dev *vg,
 				USB_RECIP_INTERFACE))
 			break;
 		if (vg->config && wIndex == 0) {
-
-			/* Raise an exception to wipe out previous transaction
-			 * state (queued bufs, etc) and install the new
-			 * interface altsetting. */
-			raise_exception(vg, VG_STATE_INTERFACE_CHANGE);
+		  //vg->new_config = wValue;
+		  //TODO: setup new interface
 			value = DELAYED_STATUS;
 		}
 		break;
