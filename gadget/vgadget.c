@@ -42,10 +42,8 @@
 /*
  * Local inclusions
  */
-#include "vg_buffers.h"
 #include "vg_device.h"
 #include "vg_debug.h"
-
 
 /*
  * Module information definitions
