@@ -456,6 +456,7 @@ static int __init vg_alloc(struct vg_dev **vg)
 	if (vg) {
 	  memset(*vg, 0, sizeof *vg);
 	  MDBG("Allocate locks and semaphores\n");
+	  rwlock_init(&(*vg)->state_lock);
 	  init_MUTEX(&(*vg)->exception_sem);
 	  init_MUTEX(&(*vg)->cmd_mutex);
 	  init_MUTEX(&(*vg)->file_mutex);
