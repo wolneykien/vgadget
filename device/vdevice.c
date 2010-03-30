@@ -396,13 +396,13 @@ static ssize_t cmd_write(struct file *file, const char *user_buffer, size_t coun
 /* Add a given URB to the queue */
 static int vfdev_urb_offer(struct usb_vfdev *dev, struct urb *urb)
 {
-  struct buf_entry *queue;
+  struct urb_entry *queue;
   struct urb_entry *urb_entry;
   int rc;
 
   if (down_interruptible(&dev->mutex) == 0) {
     /* Make a new queue entry */
-    entry = kmalloc(sizeof struct buf_entry, GFP_KERNEL);
+    entry = kmalloc(sizeof struct urb_entry, GFP_KERNEL);
     if (entry != NULL) {
       /* Offer the new entry to the queue */
       etnry->urb = urb;
