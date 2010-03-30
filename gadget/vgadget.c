@@ -29,9 +29,7 @@
 #include <linux/kref.h>
 #include <linux/kthread.h>
 #include <linux/limits.h>
-#include <linux/rwsem.h>
 #include <linux/slab.h>
-#include <linux/spinlock.h>
 #include <linux/string.h>
 #include <linux/freezer.h>
 #include <linux/utsname.h>
@@ -456,7 +454,6 @@ static int __init vg_alloc(struct vg_dev **vg)
 	if (vg) {
 	  memset(*vg, 0, sizeof *vg);
 	  MDBG("Allocate locks and semaphores\n");
-	  rwlock_init(&(*vg)->state_lock);
 	  init_MUTEX(&(*vg)->exception_sem);
 	  init_MUTEX(&(*vg)->cmd_mutex);
 	  init_MUTEX(&(*vg)->file_mutex);
@@ -503,88 +500,6 @@ static int __init autoconfig_endpoint(struct vg_dev *vg,
 
 
 /*
- * Implementation section. Exception handling
- */
-
-/* Returns the current state value */
-static enum vg_state inline vg_get_state(struct vg_dev *vg)
-{
-  enum vg_state state;
-
-  read_lock_irqsave(&vg->state_lock, vg->irq_state);
-  state = vg->state;
-  read_unlock_irqrestore(&vg->state_lock, vg->irq_state);
-
-  return state;
-}
-
-/* Indicates if an exception is in progress */
-static int inline exception_in_progress(struct vg_dev *vg)
-{
-  return (vg_get_state(vg) < VG_STATE_IDLE);
-}
-
-/* Raises the given exception (state) on the given device */
-static void raise_exception(struct vg_dev *vg, enum vg_state new_state)
-{
-	/* Do nothing if a higher-priority exception is already in progress.
-	 * If a lower-or-equal priority exception is in progress, preempt it
-	 * and notify the main thread by sending it a signal. */
-	write_lock_irqsave(&vg->state_lock, vg->irq_state);
-	if (vg->state >= new_state) {
-	  VDBG(vg, "Set the exception state %d\n", new_state);
-		vg->exception_req_tag = vg->req_tag;
-		vg->state = new_state;
-		if (vg->thread_ctl.thread_task) {
-		  wakeup_thread(vg);
-		} else {
-		  DBG(vg, "No thread task -- do not wakeup\n");
-		}
-	}
-	write_unlock_irqrestore(&vg->state_lock, vg->irq_state);
-}
-
-/* Sets the device state */
-static int vg_set_state(struct vg_dev *vg, enum vg_state new_state)
-{
-  int rc;
-
-  write_lock_irqsave(&vg->state_lock, vg->irq_state);
-  if (!exception_in_progress(vg)) {
-    DBG(vg, "New device state: %d\n", new_state);
-    vg->state = new_state;
-    rc = 1;
-  } else {
-    rc = 0;
-  }
-  write_unlock_irqrestore(&vg->state_lock, vg->irq_state);
-
-  return rc;
-}
-
-/* Clears the exception state */
-static void vg_clear_exception(struct vg_dev *vg)
-{
-  write_lock_irqsave(&vg->state_lock, vg->irq_state);
-  DBG(vg, "Clear an exception state\n");
-  vg->state = VG_STATE_IDLE;
-  write_unlock_irqrestore(&vg->state_lock, vg->irq_state);
-}
-
-/* Indicates if a normal execution is in progress */
-static int inline is_running(struct vg_dev *vg)
-{
-  return (vg_get_state(vg) > VG_STATE_IDLE);
-}
-
-/* Indicates if a the execution has been terminated */
-static int inline is_terminated(struct vg_dev *vg)
-{
-  return (vg_get_state(vg) == VG_STATE_TERMINATED);
-}
-
-
-/*
  * Implementation section. The dagdet driver
  */
 
@@ -606,9 +521,6 @@ static void vg_resume(struct usb_gadget *gadget)
 	clear_bit(SUSPENDED, &vg->flags);
 }
 
-
-/* Main thread procedure prototype */
-static int vg_main_thread(void *vg_);
 
 /* Endpoint zero completion procedure prototype */
 static void ep0_complete(struct usb_ep *ep, struct usb_request *req);

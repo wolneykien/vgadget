@@ -31,22 +31,6 @@ struct vg_thread_ctl {
 	int			thread_pid;
 };
 
-/* The set of gadget states */
-enum vg_state {
-	VG_STATE_TERMINATED = -7,
-	VG_STATE_EXIT,
-	VG_STATE_DISCONNECT,
-	VG_STATE_CONFIG_CHANGE,
-	VG_STATE_INTERFACE_CHANGE,
-	VG_STATE_RESET,
-        VG_STATE_ABORT_BULK_OUT,
-	VG_STATE_IDLE = 0,
-	VG_STATE_RUNNING,
-        VG_STATE_COMMAND_PHASE,
-	VG_STATE_DATA_PHASE,
-	VG_STATE_STATUS_PHASE,
-};
-
 /* A request queue entry */
 struct vg_req_entry {
   struct usb_request *req;
@@ -60,15 +44,9 @@ struct vg_dev {
 
         /* State and control */
         u8			config;
-        u8			new_config;
-	u32			tag;
 	volatile unsigned int	req_tag;
-	unsigned int		exception_req_tag;
-	enum vg_state		state;
-       	rwlock_t		state_lock;
-        unsigned long           irq_state;
-        struct semaphore        exception_sem;
-	unsigned long		flags;
+        atomic_t                state;
+        unsigned long		flags;
 
         /* Endpoints */
 	struct usb_ep		*ep0;
