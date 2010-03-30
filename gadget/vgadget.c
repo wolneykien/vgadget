@@ -1050,10 +1050,7 @@ static void vg_disconnect(struct usb_gadget *gadget)
 	struct vg_dev *vg = get_gadget_data(gadget);
 
 	DBG(vg, "Disconnect or port reset\n");
-	vg_cmd_read_ahead_stop(vg);
-	vg_cmd_read_ahead_start(vg);
-	vg_file_send_ahead_stop(vg);
-	vg_file_send_ahead_start(vg);
+	//TODO: stop all transfer processes, may not sleep
 }
 
 
