@@ -495,6 +495,9 @@ static int allocate_request(struct usb_ep *ep,
 			    struct usb_request **req)
 {
   int rc;
+  struct vg_dev *vg;
+
+  vg = (vg_dev *) ep->driver_data;
 
   MDBG("Allocate a request for endpoint %s\n",
        ep->name);
@@ -505,7 +508,7 @@ static int allocate_request(struct usb_ep *ep,
   } else {
     rc = 0;
     (*req)->buf = NULL;
-    (*req)->dma = NULL;
+    (*req)->dma = 0;
     (*req)->complete = NULL;
     (*req)->length = 0;
     (*req)->zero = 0;
@@ -513,8 +516,8 @@ static int allocate_request(struct usb_ep *ep,
 
   if (rc == 0) {
     MDBG("Allocate a buffer for the request of %d b\n", size);
-    (*req)->buf = kmalloc(size, GFP_KERNEL);
-    (*req)->dma = NULL; //TODO: use DMA pool
+    (*req)->buf =
+      dma_pool_alloc(vg->dma_pool, GFP_KERNEL, &(*req)->dma);
     if (*req->buf == NULL) {
       rc = -ENOMEM;
       MERROR("Unable to allocate a buffer for the request\n");
@@ -532,12 +535,15 @@ static int free_request(struct usb_ep *ep,
 			struct usb_request *req)
 {
   int rc;
+  struct vg_dev *vg;
+
+  vg = (vg_dev *) ep->driver_data;
 
   if (req->buf != NULL) {
     MDBG("Free the buffer of a request for endpoint %s\n", ep->name);
-    kfree(buf); //TODO: some operations for DMA pool?
+    dma_pool_free(vg->dma_pool, req->buf, req->dma);
     req->buf = NULL;
-    req->dma = NULL;
+    req->dma = 0;
   }
   
   MDBG("Free a request buffer for endpoint %s\n", ep->name);
