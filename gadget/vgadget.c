@@ -899,8 +899,9 @@ static int standard_setup_req(struct vg_dev *vg,
 		case USB_DT_DEVICE:
 			VDBG(vg, "Get device descriptor\n");
 			value = min(wLength, (u16) sizeof device_desc);
-			allocate_request(vg->ep0, value, res_req);
+			allocate_request(vg->ep0, EP0_BUFSIZE, res_req);
 			memcpy((*res_req)->buf, &device_desc, value);
+			set_request_length(*res_req, value);
 			break;
 #ifdef CONFIG_USB_GADGET_DUALSPEED
 		case USB_DT_DEVICE_QUALIFIER:
@@ -908,8 +909,9 @@ static int standard_setup_req(struct vg_dev *vg,
 			if (!vg->gadget->is_dualspeed)
 				break;
 			value = min(wLength, (u16) sizeof dev_qualifier);
-			allocate_request(vg->ep0, value, res_req);
+			allocate_request(vg->ep0, EP0_BUFSIZE, res_req);
 			memcpy((*res_req)->buf, &dev_qualifier, value);
+			set_request_length(*res_req, value);
 			break;
 
 		case USB_DT_OTHER_SPEED_CONFIG:
@@ -962,8 +964,9 @@ static int standard_setup_req(struct vg_dev *vg,
 				USB_RECIP_DEVICE))
 			break;
 		value = min(wLength, (u16) 1);
-		allocate_request(vg->ep0, value, res_req);
+		allocate_request(vg->ep0, EP0_BUFSIZE, res_req);
 		*(u8 *) (*res_req)->buf = vg->config;
+		set_request_length(*res_req, value);
 		break;
 
 	case USB_REQ_SET_INTERFACE:
@@ -989,8 +992,9 @@ static int standard_setup_req(struct vg_dev *vg,
 			break;
 		}
 		value = min(wLength, (u16) 1);
-		allocate_request(vg->ep0, value, res_req);
+		allocate_request(vg->ep0, EP0_BUFSIZE, res_req);
 		*(u8 *) (*res_req)->buf = 0;
+		set_request_length(*res_req, value);
 		break;
 
 	default:
