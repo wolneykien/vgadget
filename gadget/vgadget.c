@@ -636,6 +636,14 @@ static int __init vg_bind(struct usb_gadget *gadget)
 	vg->ep0 = gadget->ep0;
 	vg->ep0->driver_data = vg;
 
+	MDBG("Allocate the DMA pool\n");
+	vg->dma_pool =
+	  dma_pool_create(DMA_POOL_NAME,
+			  gadget->dev, 
+			  DMA_POOL_BUF_SIZE,
+			  PAGE_SIZE,
+			  PAGE_SIZE);
+
 	if ((rc = check_parameters(vg)) != 0) {
 	  ERROR(vg, "Invalid parameter(s) passed\n");
 	}
@@ -786,6 +794,8 @@ static void vg_unbind(struct usb_gadget *gadget)
 	vg_stop_processes(vg);
 
 	set_gadget_data(gadget, NULL);
+	dma_pool_destroy(vg->dma_pool);
+	vg->dma_pool = NULL;
 }
 
 /* Class setup request processor */

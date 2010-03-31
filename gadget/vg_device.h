@@ -41,10 +41,17 @@ struct vg_req_entry {
   struct vg_req_entry *next;
 }
 
+/* DMA pool parameters */
+
+#define DMA_POOL_NAME "vgadget"
+#define DMA_POOL_SIZE 8
+#define DMA_POOL_BUF_SIZE PAGE_SIZE
+
 /* A gadget device structure */
 struct vg_dev {
         /* Low-level device link */
 	struct usb_gadget	*gadget;
+        struct dma_pool         *dma_pool;
 
         /* State and control */
         u8			config;
