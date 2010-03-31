@@ -797,9 +797,11 @@ static void vg_unbind(struct usb_gadget *gadget)
 	clear_bit(REGISTERED, &vg->flags);
 
 	/* Stop the ahead-working processes */
+	DBG(vg, "Stop the background processes\n");
 	vg_stop_processes(vg);
 
 	set_gadget_data(gadget, NULL);
+	DBG(vg, "Free the DMA pool\n");
 	dma_pool_destroy(vg->dma_pool);
 	vg->dma_pool = NULL;
 }
