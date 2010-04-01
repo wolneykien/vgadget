@@ -1082,16 +1082,14 @@ static void vg_disconnect(struct usb_gadget *gadget)
  */
 
 /* Add a given USB request to a given queue */
-static int cmd_request_offer(struct vg_thread_ctl *proc_ctl,
-			     struct vg_req_entry **queue_head,
-			     struct semaphore *queue_sem,
+static int cmd_request_offer(struct vg_dev *dev,
 			     struct urs_request *req)
 {
   struct vg_req_entry *queue;
   struct vg_req_entry *entry;
   int rc;
 
-  if (down_interruptible(&proc_ctl->mutex) == 0) {
+  if (down_interruptible(&vg->cmd_read->mutex) == 0) {
     /* Make a new queue entry */
     entry = kmalloc(sizeof struct vg_req_entry, GFP_KERNEL);
     if (entry != NULL) {
@@ -1100,8 +1098,8 @@ static int cmd_request_offer(struct vg_thread_ctl *proc_ctl,
       etnry->next = NULL;
       rc = 0;
       /* Send notifications */
-      up(queue_sem);
-      wake_up(&proc_ctl->wait);
+      up(&vg->cmd_queue_sem);
+      wake_up(&vg->cmd_read->wait);
     } else {
       err("Unable to allocate a queue entry");
       rc = -ENOMEM;
@@ -1109,17 +1107,17 @@ static int cmd_request_offer(struct vg_thread_ctl *proc_ctl,
 
     /* Offer the entry to the queue */
     if (rc == 0) {
-      if (*queue_head != NULL) {
-	queue = *queue_head;
+      if (vg->cmd_queue != NULL) {
+	queue = vg->cmd_queue;
 	while (queue->next != NULL) {
 	  queue = queue->next;
 	}
 	queue->next = entry;
       } else {
-	*queue_head = entry;
+	vg->cmd_queue = entry;
       }
     }
-    up(&proc_ctl->mutex);
+    up(&vg->cmd_read->mutex);
     return rc;
   } else {
     return -ERESTARTSYS;
@@ -1132,10 +1130,7 @@ static void cmd_complete(struct usb_ep *ep, struct usb_request *req)
   struct vg_dev *vg = (struct vg_dev *) ep->driver_data;
 
   ep_complete_common(ep, req);
-  if (cmd_request_offer(&vg->cmd_read,
-			&vg->cmd_queue,
-			&vg->cmd_queue_sem,
-			req) != 0) {
+  if (cmd_request_offer(vg, req) != 0) {
     MERROR("Unable to enqueue the finished request for endpoint %s\n",
 	   ep->name);
     free_request(ep, req);
