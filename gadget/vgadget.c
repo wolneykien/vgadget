@@ -732,8 +732,22 @@ static int vg_cmd_read_ahead_start(struct vg_dev *vg)
   return rc;
 }
 
+/* Waits for the CMD read-ahead process to terminate
+ * and clears its state */
+static int vg_cmd_read_ahead_wait(struct vg_dev *vg)
+{
+  if (test_bit(1, &vg->cmd_read.state) == 1) {
+    wait_for_completion(&vg->cmd_read.completion);
+    &vg->cmd_read.pid = 0;
+    clear_bit(1, &vg->cmd_read.state);
+    return 0;
+  } else {
+    return 1;
+  }
+}
+
 /* Stops the CMD read-ahead process */
-static int vg_cmd_read_ahead_stop(struct vg_dev *vg)
+static int vg_cmd_read_ahead_stop(struct vg_dev *vg, int wait)
 {
   int rc;
 
@@ -742,8 +756,9 @@ static int vg_cmd_read_ahead_stop(struct vg_dev *vg)
   if (test_and_set_bit(1, &vg->cmd_read.state) == 0) {
     DBG(vg, "Stop the CMD read-ahead process\n");
      //TODO: write an implementation
-    wait_for_completion(&vg->cmd_read.completion);
-    &vg->cmd_read.pid = 0;
+    if (wait) {
+      rc = vg_cmd_read_ahead_wait(vg);
+    }
   }
 
   return rc;
@@ -760,8 +775,22 @@ static int vg_file_send_ahead_start(struct vg_dev *vg)
   return rc;
 }
 
+/* Waits for the FILE send-ahead process to terminate
+ * and clears its state */
+static int vg_file_send_ahead_wait(struct vg_dev *vg)
+{
+  if (test_bit(1, &vg->file_send.state) == 1) {
+    wait_for_completion(&vg->file_send.completion);
+    &vg->cmd_read.pid = 0;
+    clear_bit(1, &vg->file_send.state);
+    return 0;
+  } else {
+    return 1;
+  }
+}
+
 /* Stops the FILE send-ahead process */
-static int vg_file_send_ahead_stop(struct vg_dev *vg)
+static int vg_file_send_ahead_stop(struct vg_dev *vg, int wait)
 {
   int rc;
 
@@ -770,21 +799,22 @@ static int vg_file_send_ahead_stop(struct vg_dev *vg)
   if (test_and_set_bit(1, &vg->file_send.state) == 0) {
     DBG(vg, "Stop the FILE send-ahead process\n");
      //TODO: write an implementation
-    wait_for_completion(&vg->file_send.completion);
-    &vg->file_send.pid = 0;
+    if (wait) {
+      vg_file_send_ahead_wait(vg);
+    }
   }
 
   return rc;
 }
 
 /* Stop all of the threads */
-static int vg_stop_processes(struct vg_dev *vg)
+static int vg_stop_processes(struct vg_dev *vg, int wait)
 {
   int rc;
   
   rc = 0;
-  rc |= vg_cmd_read_ahead_stop(vg);
-  rc |= vg_file_send_ahead_stop(vg);
+  rc |= vg_cmd_read_ahead_stop(vg, wait);
+  rc |= vg_file_send_ahead_stop(vg, wait);
 
   return rc;
 }
@@ -798,7 +828,7 @@ static void vg_unbind(struct usb_gadget *gadget)
 
 	/* Stop the ahead-working processes */
 	DBG(vg, "Stop the background processes\n");
-	vg_stop_processes(vg);
+	vg_stop_processes(vg, 1);
 
 	set_gadget_data(gadget, NULL);
 	DBG(vg, "Free the DMA pool\n");
@@ -1222,124 +1252,6 @@ static int cmd_request_enqueue(struct vg_dev *vg)
   }
 }
 
-/* Makes bulk-out requests be divisible by the maxpacket size */
-static void inline set_bulk_out_req_length(struct vg_dev *vg,
-		struct vg_buffhd *bh, unsigned int length)
-{
-	unsigned int	rem;
-	unsigned int    maxpacket;
-
-	bh->bulk_out_intended_length = length;
-#ifdef CONFIG_USB_GADGET_DUALSPEED
-	if (vg->gadget->speed == USB_SPEED_HIGH) {
-	  maxpacket = hs_bulk_in_desc.wMaxPacketSize;
-	} else {
-	  maxpacket = fs_bulk_in_desc.wMaxPacketSize;
-	} // TODO: use queue related endpoint descriptors
-#else
-	maxpacket = fs_bulk_in_desc.wMaxPacketSize;
-#endif
-	rem = length % maxpacket;
-	if (rem > 0)
-	  length += maxpacket - rem;
-	bh->req->length = length;
-}
-
-/* Initiates a bulk transfer */
-static int start_transfer(struct vg_dev *vg, struct usb_ep *ep,
-			   struct usb_request *req, volatile int *pbusy,
-			   volatile enum vg_buffer_state *state)
-{
-	int rc;
-
-	if (ep == vg->bulk_out)
-	  dump_msg(vg, "bulk-out", req->buf, req->length);
-	else if (ep == vg->bulk_in)
-	  dump_msg(vg, "bulk-in", req->buf, req->length);
-	else if (ep == vg->bulk_status_in)
-	  dump_msg(vg, "bulk-status-out", req->buf, req->length);
-	else
-	  return -EOPNOTSUPP;
-
-	*pbusy = 1;
-	*state = BUF_STATE_BUSY;
-	rc = usb_ep_queue(ep, req, GFP_KERNEL);
-	if (rc != 0) {
-	  *pbusy = 0;
-	  *state = BUF_STATE_EMPTY;
-	  if (rc != -ESHUTDOWN && !(rc == -EOPNOTSUPP &&
-				    req->length == 0))
-	    WARN(vg, "error in submission: %s --> %d\n",
-		 ep->name, rc);
-	}
-
-	return rc;
-}
-
-/* Sets the endpoint halt status */
-static int vg_set_halt(struct vg_dev *vg, struct usb_ep *ep)
-{
-	const char *name;
-
-	if (ep == vg->bulk_out)
-	  name = "bulk-out";
-	else if (ep == vg->bulk_in)
-	  name = "bulk-in";
-	else if (ep == vg->bulk_status_in)
-	  name = "bulk-status-in";
-	else
-	  name = ep->name;
-
-	DBG(vg, "%s set halt\n", name);
-	return usb_ep_set_halt(ep);
-}
-
-/* Halts the given bulk endpoint */
-static int halt_bulk_in_endpoint(struct vg_dev *vg, struct usb_ep *ep)
-{
-	int rc;
-
-	rc = vg_set_halt(vg, vg->bulk_in);
-	if (rc == -EAGAIN)
-	  VDBG(vg, "delayed bulk-in endpoint halt\n");
-	while (rc != 0) {
-	  if (rc != -EAGAIN) {
-	    WARN(vg, "usb_ep_set_halt -> %d\n", rc);
-	    rc = 0;
-	    break;
-	  }
-
-	  /* Wait for a short time and then try again */
-	  if (msleep_interruptible(100) != 0)
-	    return -EINTR;
-	  rc = usb_ep_set_halt(ep);
-	}
-	
-	return rc;
-}
-
-
-
-/*
- * Implementation section. The main thread and company
- */
-
-/* Read next command */
-static int get_next_command(struct vg_dev *vg)
-{
-	int rc = 1;
-
-	return rc;
-}
-
-/* Process the command */
-static int process_command(struct vg_dev *vg)
-{
-	int rc = 1;
-
-	return rc;
-}
-
 /* Enables the given endpoint */
 static int enable_endpoint(struct vg_dev *vg, struct usb_ep *ep,
 			   const struct usb_endpoint_descriptor *d)
@@ -1355,6 +1267,12 @@ static int enable_endpoint(struct vg_dev *vg, struct usb_ep *ep,
 	return rc;
 }
 
+
+
+/*
+ * Implementation section. Configuration procedures
+ */
+
 /* Resets the interface setting and re-init endpoints */
 static int do_set_interface(struct vg_dev *vg, int altsetting)
 {
@@ -1362,18 +1280,11 @@ static int do_set_interface(struct vg_dev *vg, int altsetting)
 
  	VDBG(vg, "Reset the interface\n");
 
-	/* Deallocate the requests */
-	DBG(vg, "Free request objects for all queues\n");
-	vg_free_requests(&vg->out_bufq, vg->bulk_out);
-	vg_free_requests(&vg->in_bufq, vg->bulk_in);
-	vg_free_requests(&vg->status_in_bufq, vg->bulk_status_in);
-
 	/* Disable the endpoints */
 	DBG(vg, "Disable all endpoints\n");
 	usb_ep_disable(vg->bulk_out);
 	usb_ep_disable(vg->bulk_in);
 	usb_ep_disable(vg->bulk_status_in);
-	vg_set_state(vg, VG_STATE_IDLE);
 
 	if (altsetting < 0) {
 	  return rc;
@@ -1422,28 +1333,6 @@ static int do_set_interface(struct vg_dev *vg, int altsetting)
 	}
 #endif
 
-	/* Allocate the requests */
-	DBG(vg, "Allocate request objects for all queues\n");
-	if (rc == 0) {
-	  if ((rc = vg_allocate_requests(&vg->out_bufq, vg->bulk_out)) != 0) {
-	    ERROR(vg, "Unable to allocate request for the bulk-out queue\n");
-	  }
-	}
-	if (rc == 0) {
-	  if ((rc = vg_allocate_requests(&vg->in_bufq, vg->bulk_in)) != 0) {
-	    ERROR(vg, "Unable to allocate request for the bulk-in queue\n");
-	  }
-	}
-	if (rc == 0) {
-	  if ((rc = vg_allocate_requests(&vg->status_in_bufq,
-					 vg->bulk_status_in)) != 0) {
-	    ERROR(vg, "Unable to allocate request for the bulk-status-in "
-		      "queue\n");
-	  }
-	}
-
-	vg_set_state(vg, VG_STATE_IDLE);
-
 	return rc;
 }
 
@@ -1484,180 +1373,6 @@ static int do_set_config(struct vg_dev *vg, int new_config)
 		}
 	}
 	return rc;
-}
-
-/* Handles an exception state of the gadget device */
-static int handle_exception(struct vg_dev *vg)
-{
-	enum vg_state		old_state;
-	u8			new_config;
-	unsigned int		exception_req_tag;
-	int			rc;
-
-	if (!exception_in_progress(vg)) {
-	  return 0;
-	}
-	
-	VDBG(vg, "Handle the exception state %d\n", vg_get_state(vg));
-
-	/* Cancel all the pending transfers */
-	DBG(vg, "Cancell all the pending transfers\n");
-	vg_dequeue_all(&vg->out_bufq, vg->bulk_out);
-	vg_dequeue_all(&vg->in_bufq, vg->bulk_in);
-	vg_dequeue_all(&vg->status_in_bufq, vg->bulk_status_in);
-
-	/* Wait until everything is idle */
-	while (!vg_no_transfers(&vg->out_bufq, vg->bulk_out)
-	       || !vg_no_transfers(&vg->in_bufq, vg->bulk_in)
-	       || !vg_no_transfers(&vg->status_in_bufq, vg->bulk_status_in))
-	{
-	  DBG(vg, "Wait until everything is idle\n");
-	  if ((rc = sleep_thread(vg)) != 0) {
-	    WARN(vg, "Interrupted while handle the exception\n");
-	    return rc;
-	  }
-	}
-
-	/* Clear out the controller's fifos */
-	DBG(vg, "Clear out the controller's fifos\n");
-	usb_ep_fifo_flush(vg->bulk_out);
-	usb_ep_fifo_flush(vg->bulk_in);
-	usb_ep_fifo_flush(vg->bulk_status_in);
-
-	/* Reset the queue pointers */
-	DBG(vg, "Reset the queue pointers\n");
-	vg_reset_queue(&vg->out_bufq);
-	vg_reset_queue(&vg->in_bufq);
-	vg_reset_queue(&vg->status_in_bufq);
-
-	exception_req_tag = vg->exception_req_tag;
-	new_config = vg->new_config;
-	old_state = vg_get_state(vg);
-
-	vg_clear_exception(vg);
-
-	if (old_state == VG_STATE_ABORT_BULK_OUT) {
-	  vg_set_state(vg, VG_STATE_STATUS_PHASE);
-	} else {
-	  vg_set_state(vg, VG_STATE_IDLE);
-	}
-
-	/* Carry out any extra actions required for the exception */
-	switch (old_state) {
-	default:
-		break;
-
-	case VG_STATE_ABORT_BULK_OUT:
-	  vg_set_state(vg, VG_STATE_IDLE);
-	  break;
-
-	case VG_STATE_RESET:
-		/* In case we were forced against our will to halt a
-		 * bulk endpoint, clear the halt now.  (The SuperH UDC
-		 * requires this.) */
-		if (test_and_clear_bit(CLEAR_BULK_HALTS,
-				       &vg->flags)) {
-		  DBG(vg, "Clear bulk halts\n");
-		  usb_ep_clear_halt(vg->bulk_out);
-		  usb_ep_clear_halt(vg->bulk_in);
-		  usb_ep_clear_halt(vg->bulk_status_in);
-		}
-
-		if (vg->req_tag == exception_req_tag) {
-		  DBG(vg, "Enqueue to ep0 to c omplete the status stage\n");
-		  ep0_queue(vg);	// Complete the status stage
-		}
-		break;
-
-	case VG_STATE_INTERFACE_CHANGE:
-		rc = do_set_interface(vg, 0);
-		if (vg->req_tag != exception_req_tag)
-		  break;
-		if (rc != 0)			// STALL on errors
-		  vg_set_halt(vg, vg->ep0);
-		else				// Complete the status stage
-		  ep0_queue(vg);
-		break;
-
-	case VG_STATE_CONFIG_CHANGE:
-	  DBG(vg, "Set new configuration %d\n", new_config);
-	  rc = do_set_config(vg, new_config);
-	  if (vg->req_tag != exception_req_tag)
-	    break;
-	  if (rc != 0)			// STALL on errors
-	    vg_set_halt(vg, vg->ep0);
-	  else				// Complete the status stage
-	    ep0_queue(vg);
-	  break;
-
-	case VG_STATE_DISCONNECT:
-	  DBG(vg, "Reset configuration on disconnect\n");
-	  do_set_config(vg, -1);		// Unconfigured state
-	  break;
-
-	case VG_STATE_EXIT:
-	case VG_STATE_TERMINATED:
-	  DBG(vg, "Reset configuration on exit/termination\n");
-	  do_set_config(vg, -1);	        // Free resources
-	  vg_set_state(vg, VG_STATE_TERMINATED);	// Stop the thread
-	  break;
-	}
-
-	return rc;
-}
-
-/* The main thread function */
-static int vg_main_thread(void *vg_)
-{
-	struct vg_dev *vg = (struct vg_dev *) vg_;
-
-	vg->thread_ctl.thread_task = current;
-
-	/* Release all our userspace resources */
-	DBG(vg, "Daemonize the main thread\n");
-	daemonize("vgadget");
-
-	/* Arrange for userspace references to be interpreted as kernel
-	 * pointers.  That way we can pass a kernel pointer to a routine
-	 * that expects a __user pointer and it will work okay. */
-	DBG(vg, "Set up for kernel-space reference compatibility\n");
-	set_fs(get_ds());
-
-	/* Wait for the gadget registration to finish up */
-	DBG(vg, "Wait for the gadget registration to finish up\n");
-	wait_for_completion(&vg->thread_ctl.thread_notifier);
-
-	/* The main loop */
-	while (!is_terminated(vg)) {
-	  if (vg_set_state(vg, VG_STATE_IDLE)) {
-	    DBG(vg, "Put the main thread in a sleep\n");
-	    sleep_thread(vg);
-	  }
-	  if (exception_in_progress(vg)) {
-	    if (!down_interruptible(&vg->exception_sem)) {
-	      handle_exception(vg);
-	      up(&vg->exception_sem);
-	    } else {
-	      WARN(vg, "Exception handler interrupted\n");
-	      vg_set_state(vg, VG_STATE_TERMINATED);
-	    }
-	    continue;
-	  }
-	  vg_set_state(vg, VG_STATE_RUNNING);
-	  if (get_next_command(vg)) {
-	    vg_set_state(vg, VG_STATE_DATA_PHASE);
-	    process_command(vg);
-	  }
-	}
-
-	VDBG(vg, "Exit off the main thread\n");
-
-	vg->thread_ctl.thread_task = NULL;
-
-	/* Let the unbind and cleanup routines know the thread has exited */
-	DBG(vg, "Let the unbind and cleanup routines know the thread "
-	        "has exited\n");
-	complete_and_exit(&vg->thread_ctl.thread_notifier, 0);
 }
 
 
