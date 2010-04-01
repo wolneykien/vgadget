@@ -24,12 +24,14 @@
  * A gadget device object
  */
 
+/* Define thread flag bits */
+#define RUNNING 1
 
 /* A thread control structure */
 struct vg_thread_ctl {
-	struct completion	completion;
+        struct semaphore        running;
 	int			pid;
-        unsigned long		state;
+        unsigned long		flags;
         struct semaphore        mutex;
         struct semaphore        limit;
         wait_queue_head_t       wait;
