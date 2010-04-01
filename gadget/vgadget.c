@@ -1081,11 +1081,11 @@ static void vg_disconnect(struct usb_gadget *gadget)
  * Implementation section. Bulk endpoint procedures
  */
 
-/* Add a given URS request to a given queue */
-static int vfdev_urb_offer(struct vg_thread_ctl *proc_ctl,
-			   struct vg_req_entry **queue_head,
-			   struct semaphore *queue_sem,
-			   struct urs_request *req)
+/* Add a given USB request to a given queue */
+static int cmd_request_offer(struct vg_thread_ctl *proc_ctl,
+			     struct vg_req_entry **queue_head,
+			     struct semaphore *queue_sem,
+			     struct urs_request *req)
 {
   struct vg_req_entry *queue;
   struct vg_req_entry *entry;
