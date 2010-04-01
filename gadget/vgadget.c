@@ -1186,6 +1186,42 @@ static void cmd_complete(struct usb_ep *ep, struct usb_request *req)
   }
 }
 
+/* Enqueues a next command read-ahead request */
+static int cmd_request_enqueue(struct vg_dev *vg)
+{
+  static struct usb_request *req;
+  void *buf;
+  int rc;
+
+  if ((rc = down_interruptible(&vg->cmd_read->limit)) == 0) {
+    /* Exit immediately if the read-ahead process has been terminated */
+    if ((rc = test_bit(&vg->cmd_read->status) != 0)) {
+      return rc;
+    }
+    /* Allocate a request */
+    if ((rc = allocate_request(vg->bulk_out,
+			       DMA_POOL_BUF_SIZE,
+			       &req)) == 0) {
+      /* Enqueue the request */
+      DBG(vg, "Submit a command read-ahead request\n");
+      if ((rc = enqueue_request(vg->bulk_out, req, cmd_complete)) != 0) {
+	ERROR(vg, "Failed submitting read-ahead request\n");
+      }
+    }
+
+    if (rc != 0) {
+      /* Cleanup on error */
+      if (req != NULL) {
+	free_request(req);
+      }
+      up(&vg->cmd_read->limit);
+    }
+    return rc;
+  } else {
+    return -ERESTARTSYS;
+  }
+}
+
 /* Makes bulk-out requests be divisible by the maxpacket size */
 static void inline set_bulk_out_req_length(struct vg_dev *vg,
 		struct vg_buffhd *bh, unsigned int length)
