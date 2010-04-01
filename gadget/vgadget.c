@@ -1082,7 +1082,7 @@ static void vg_disconnect(struct usb_gadget *gadget)
  */
 
 /* Add a given USB request to a given queue */
-static int cmd_request_offer(struct vg_dev *dev,
+static int cmd_request_offer(struct vg_dev *vg,
 			     struct urs_request *req)
 {
   struct vg_req_entry *queue;
