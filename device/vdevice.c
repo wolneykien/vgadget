@@ -66,8 +66,8 @@ module_param_named(minor, vdev_class.minor_base, int, S_IRUGO);
 MODULE_PARM_DESC(minor, "USB interface base minor number");
 
 /* Define limits */
-#define MAX_TRANSFER	2048
-#define READ_BUF_SIZE   2048
+#define MAX_TRANSFER	PAGE_SIZE
+#define READ_BUF_SIZE   PAGE_SIZE
 
 /* The maximal number of write requests in the queue */
 static int maxwrites = 4;
