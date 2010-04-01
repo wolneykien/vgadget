@@ -1124,6 +1124,55 @@ static int cmd_request_offer(struct vg_dev *vg,
   }
 }
 
+/* Takes one USB request from the head of the queue if any */
+static int cmd_request_try_take(struct vg_dev *vg,
+				struct urs_request **req)
+{
+  struct vg_req_entry *next;
+
+  if (down_trylock(&vg->cmd_queue_sem) == 0) {
+    if (down_interruptible(&vg->cmd_read->mutex) == 0) {
+      if (vg->cmd_queue != NULL) {
+	*req = vg->cmd_queue->res;
+	next = vg->cmd_queue->next;
+	kfree(vg->queue);
+	vg->queue = next;
+	/* Invite the read-ahead procedure to continue */
+	up(&vg->cmd_read->limit);
+      } else {
+	*req = NULL;
+      }
+      up(&vg->cmd_read->mutex);
+      return 0;
+    } else {
+      *req = NULL;
+      return -ERESTARTSYS;
+    }
+  } else {
+    *req = NULL;
+    return 0;
+  }
+}
+
+/* Takes one USB request from the head of the queue */
+static int cmd_request_take(struct vg_dev *vg,
+			    struct usb_request **req)
+{
+  int rc;
+  
+  /* Try to take an USB from the queue */
+  while ((rc = cmd_request_try_take(vg, req)) == 0) {
+    if (*req != NULL) {
+      /* Exit with the taken USB */
+      break;
+    } else {
+      /* Wait for the next available USB */
+      rc = down_interruptible(&vg->cmd_queue_sem);
+    }
+  }
+  return rc;
+}
+
 /* Handles a finished request of a bulk-in (CMD) endpoint */
 static void cmd_complete(struct usb_ep *ep, struct usb_request *req)
 {
