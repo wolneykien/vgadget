@@ -110,6 +110,9 @@ struct usb_vdev {
 };
 #define to_vdev(d) container_of(d, struct usb_vdev, kref)
 
+/* Define process flag bits */
+#define RUNNING 1
+
 /* The URB buffer information linked list entry structure */
 struct urb_entry {
   struct urb *urb;
@@ -136,9 +139,9 @@ struct usb_vfdev {
   __u8 bulk_in_epaddr;
   /* The read-ahead process data */
   int read_ahead_pid;
-  atomic_t read_ahead_status;
+  unsigned long read_ahead_flags;
+  struct semaphore read_ahead_running;
   wait_queue_head_t fifo_wait;
-  struct completion read_ahead_notifier;
 };
 #define to_vfdev(d) container_of(d, struct usb_vfdev, kref)
 
@@ -461,8 +464,8 @@ static int fifo_read_enqueue(struct usb_vfdev *dev)
 
   if ((rc = down_interruptible(&dev->limit_sem)) == 0) {
     /* Exit immediately if the read-ahead process has been terminated */
-    if ((rc = atomic_read(&dev->read_ahead_status) != 0)) {
-      return rc;
+    if (! test_bit(RUNNING, &dev->read_ahead_flags)) {
+      return 1;
     }
     /* Create an urb, and a buffer for it, and copy the data to the urb */
     urb = usb_alloc_urb(0, GFP_KERNEL);
@@ -767,7 +770,7 @@ static int vfdev_read_ahead_loop(void *context)
   } while (rc == 0);
 
   dbg("Read ahead process finished (%d)", rc);
-  complete_and_exit(&dev->read_ahead_notifier, rc);
+  up(&dev->read_ahead_running);
 
   return rc;
 }
@@ -777,19 +780,22 @@ static int vfdev_read_ahead_start(struct usb_vfdev *dev)
 {
   int rc;
 
-  dbg("Set up the read-ahead thread");
-  init_completion(&dev->read_ahead_notifier);
-  rc = kernel_thread(vfdev_read_ahead_loop,
-		     dev,
-		     (CLONE_VM | CLONE_FS | CLONE_FILES));
-  if (rc >= 0) {
-    dev->read_ahead_pid = rc;
-    atomic_set(&dev->read_ahead_status, 0);
-    rc = 0;
-  }
+  if (down_interruptible(&dev->read_ahead_running) == 0) {
+    dbg("Set up the read-ahead thread");
+    rc = kernel_thread(vfdev_read_ahead_loop,
+		       dev,
+		       (CLONE_VM | CLONE_FS | CLONE_FILES));
+    if (rc >= 0) {
+      dev->read_ahead_pid = rc;
+      set_bit(RUNNING, &dev->read_ahead_flags);
+      rc = 0;
+    }
 
-  if (rc == 0) {
-    dbg("Read ahead thread pid: %d\n", dev->read_ahead_pid);
+    if (rc == 0) {
+      dbg("Read ahead thread pid: %d\n", dev->read_ahead_pid);
+    }
+  } else {
+    rc = -ERESTARTSYS;
   }
 
   return rc;
@@ -817,10 +823,10 @@ static int vfdev_read_ahead_stop(struct usb_vfdev *dev)
 {
   int rc;
 
-  atomic_set(&dev->read_ahead_status, 1);
-  vfdev_read_ahead_cleanup(dev);
-  /* Wait for the read-ahead process to terminate */
-  wait_for_completion(&dev->read_ahead_notifier);
+  rc = 0
+  if (test_and_clear_bit(RUNNING, &dev->read_ahead_flags)) {
+    vfdev_read_ahead_cleanup(dev);
+  }
 
   return rc;
 }
@@ -902,7 +908,8 @@ static int vfdev_probe(struct usb_interface *interface, const struct usb_device_
 	dev_info(&interface->dev,
 		 "USB Versatile device FIFO intarface "
 	         "is now attached to usbconsf%d", interface->minor);
-	return vfdev_read_ahead_start(dev);
+	vfdev_read_ahead_start(dev);
+	return retval;
 }
 
 /* Handles a USB device disconnect event */
