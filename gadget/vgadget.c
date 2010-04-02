@@ -1371,6 +1371,29 @@ static int do_set_config(struct vg_dev *vg, int new_config)
 
 
 
+
+/*
+ * Implementation section. Background processes
+ */
+
+/* Read-ahead loop */
+static int vg_cmd_read_ahead_loop(void *context)
+{
+  int rc;
+  struct vg_dev *vg;
+
+  vg = (struct vg_dev *) context;
+
+  do {
+    rc = cmd_request_enqueue(vg);
+  } while (rc == 0);
+
+  DBG("Read ahead process finished (%d)\n", rc);
+  up(&vg->cmd_read.running);
+  return rc;
+}
+
+
 #ifdef DEBUG
 
 /*
