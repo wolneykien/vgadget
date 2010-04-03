@@ -70,7 +70,7 @@ struct vg_dev {
         struct vg_thread_ctl    cmd_read;
         struct vg_req_entry     *cmd_queue;
         struct semaphore        cmd_queue_sem;
-        struct vg_thread_ctl    file_send;
+        /*struct vg_thread_ctl    file_send;*/
 };
 
 /* Constatns for state flags */

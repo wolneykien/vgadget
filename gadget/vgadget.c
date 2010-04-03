@@ -449,11 +449,11 @@ static int __init vg_alloc(struct vg_dev **vg)
 	  MDBG("Allocate synchronization objects\n");
 	  init_MUTEX(&(*vg)->cmd_read.mutex);
 	  init_MUTEX(&(*vg)->cmd_read.running);
-	  init_MUTEX(&(*vg)->file_send.mutex);
-	  init_MUTEX(&(*vg)->file_send.running);
+//	  init_MUTEX(&(*vg)->file_send.mutex);
+//	  init_MUTEX(&(*vg)->file_send.running);
 	  sema_init(&(*vg)->cmd_read.limit, maxreads);
 	  sema_init(&(*vg)->cmd_queue_sem, 0);
-	  sema_init(&(*vg)->file_send.limit, maxwrites);
+//	  sema_init(&(*vg)->file_send.limit, maxwrites);
 	  rc = 0;
 	} else {
 	  rc = -ENOMEM;
@@ -762,44 +762,44 @@ static int vg_cmd_read_ahead_stop(struct vg_dev *vg)
 }
 
 /* Send-ahead loop prototype */
-static int vg_file_send_ahead_loop(void *context);
+//static int vg_file_send_ahead_loop(void *context);
 
 /* Starts the FILE send-ahead process */
-static int vg_file_send_ahead_start(struct vg_dev *vg)
-{
-  int rc;
-
-  if ((rc = down_interruptible(&vg->file_send.running)) == 0) {
-    MDBG("Set up the file send-ahead process\n");
-    rc = kernel_thread(vg_file_send_ahead_loop,
-		       vg,
-		       (CLONE_VM | CLONE_FS | CLONE_FILES));
-    if (rc >= 0) {
-      set_bit(RUNNING, &vg->file_send.flags);
-      vg->file_send.pid = rc;
-      rc = 0;
-    }
-  } else {
-    rc = -ERESTARTSYS;
-  }
-
-  return rc;
-}
+//static int vg_file_send_ahead_start(struct vg_dev *vg)
+//{
+//  int rc;
+//
+//  if ((rc = down_interruptible(&vg->file_send.running)) == 0) {
+//    MDBG("Set up the file send-ahead process\n");
+//    rc = kernel_thread(vg_file_send_ahead_loop,
+//		       vg,
+//		       (CLONE_VM | CLONE_FS | CLONE_FILES));
+//    if (rc >= 0) {
+//      set_bit(RUNNING, &vg->file_send.flags);
+//      vg->file_send.pid = rc;
+//      rc = 0;
+//    }
+//  } else {
+//    rc = -ERESTARTSYS;
+//  }
+//
+//  return rc;
+//}
 
 /* Stops the FILE send-ahead process */
-static int vg_file_send_ahead_stop(struct vg_dev *vg)
-{
-  int rc;
-
-  rc = 0;
-  /* Stop the process only if it is running */
-  if (test_and_clear_bit(RUNNING, &vg->file_send.flags)) {
-    DBG(vg, "Stop the FILE send-ahead process\n");
-     //TODO: write an implementation
-  }
-
-  return rc;
-}
+//static int vg_file_send_ahead_stop(struct vg_dev *vg)
+//{
+//  int rc;
+//
+//  rc = 0;
+//  /* Stop the process only if it is running */
+//  if (test_and_clear_bit(RUNNING, &vg->file_send.flags)) {
+//    DBG(vg, "Stop the FILE send-ahead process\n");
+//     //TODO: write an implementation
+//  }
+//
+//  return rc;
+//}
 
 /* Stop all of the threads */
 static int vg_stop_processes(struct vg_dev *vg)
@@ -808,7 +808,7 @@ static int vg_stop_processes(struct vg_dev *vg)
   
   rc = 0;
   rc |= vg_cmd_read_ahead_stop(vg);
-  rc |= vg_file_send_ahead_stop(vg);
+  //  rc |= vg_file_send_ahead_stop(vg);
 
   return rc;
 }
