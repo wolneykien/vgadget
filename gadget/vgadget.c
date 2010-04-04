@@ -346,7 +346,27 @@ vg_driver = {
 	},
 };
 
+/* The character device parameters */
+#define CONS_FNAME "usbconsS"
+#define CONS_MAJOR 63
+#define FIFO_FNAME "usbconsF"
+#define FIFO_MAJOR 73
 
+/* Define operations for the character devices */
+static struct file_operations cons_fops = {
+	.owner		= THIS_MODULE,
+	.read           = cmd_read,
+	.write          = status_write,
+	.open		= cons_open,
+	.release	= cons_release,
+};
+
+static struct file_operations fifo_fops = {
+	.owner		= THIS_MODULE,
+	.write          = fifo_write,
+	.open		= fifo_open,
+	.release	= fifo_release,
+};
 
 
 /*
@@ -382,6 +402,7 @@ static struct vg_dev *the_vg;
 static int __init vg_init(void)
 {
 	int rc;
+	int cdevno, fdevno;
 
 	MDBG("Process the module parameters\n");
 	snprintf(manufacturer, sizeof manufacturer, "%s",
@@ -404,6 +425,30 @@ static int __init vg_init(void)
 	  }
 	} else {
 	  MERROR("Unable to allocate the gadget device object\n");
+	}
+
+	if (rc == 0) {
+	  MDBG("Register the console device\n");
+	  cdevno = MKDEV(CONS_MAJOR, 0);
+	  cdev_init(&the_vg->cons_dev, &cons_fops);
+	  the_vg->cons_dev.owner = THIS_MODULE;
+	  the_vg->cons_dev.ops = &cons_fops;
+	  the_vg->cons_dev.kobj.name = CONS_FNAME;
+	  if ((rc = cdev_add(&the_vg->cons_dev, cdevno, 1)) != 0) {
+	    MERROR("Unable to register the console device\n");
+	  }
+	}
+
+	if (rc == 0) {
+	  MDBG("Register the FIFO device\n");
+	  fdevno = MKDEV(FIFO_MAJOR, 0);
+	  cdev_init(&the_vg->fifo_dev, &fifo_fops);
+	  the_vg->fifo_dev.owner = THIS_MODULE;
+	  the_vg->fifo_dev.ops = &fifo_fops;
+	  the_vg->fifo_dev.kobj.name = FIFO_FNAME;
+	  if ((rc = cdev_add(&the_vg->fifo_dev, fdevno, 1)) != 0) {
+	    MERROR("Unable to register the FIFO device\n");
+	  }
 	}
 
 	return rc;
