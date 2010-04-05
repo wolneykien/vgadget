@@ -353,6 +353,11 @@ vg_driver = {
 #define FIFO_MAJOR 73
 
 /* Define operations for the character devices */
+static ssize_t cmd_read (struct file *, char __user *, size_t, loff_t *);
+static ssize_t status_write (struct file *, const char __user *, size_t,
+			     loff_t *);
+static int cons_open (struct inode *, struct file *);
+static int cons_release (struct inode *, struct file *);
 static struct file_operations cons_fops = {
 	.owner		= THIS_MODULE,
 	.read           = cmd_read,
@@ -361,12 +366,20 @@ static struct file_operations cons_fops = {
 	.release	= cons_release,
 };
 
+static ssize_t fifo_write (struct file *, const char __user *, size_t,
+			   loff_t *);
+static int fifo_open (struct inode *, struct file *);
+static int fifo_release (struct inode *, struct file *);
+static int fifo_mmap (struct file *, struct vm_area_struct *);
+static ssize_t fifo_sendpage (struct file *, struct page *, int, size_t,
+			      loff_t *, int);
 static struct file_operations fifo_fops = {
 	.owner		= THIS_MODULE,
 	.write          = fifo_write,
 	.open		= fifo_open,
 	.release	= fifo_release,
 	.splice_write   = generic_splice_sendpage,
+	.mmap           = fifo_mmap,
 	.sendpage       = fifo_sendpage,
 };
 
@@ -1337,6 +1350,192 @@ static int main_process(void *context)
 
   complete_and_exit(&vg->main_exit, rc);
   return rc;
+}
+
+
+
+/*
+ * Implementation section. Device file operationsn
+ */
+
+/* Read a command from the host */
+static ssize_t cmd_read (struct file *filp,
+			 char __user *buf,
+			 size_t count,
+			 loff_t *offp)
+{
+  ssize_t len;
+  struct vg_dev *vg;
+
+  vg = (struct vg_dev *) filp->private_data;
+  DBG(vg, "Read command data from the host\n");
+  len = 0; //TODO: implement read
+
+  return len;
+}
+
+/* Read a given status data to the host */
+static ssize_t status_write (struct file *filp,
+			     const char __user *buf,
+			     size_t count,
+			     loff_t *offp)
+{
+  ssize_t len;
+  struct vg_dev *vg;
+
+  vg = (struct vg_dev *) filp->private_data;
+  DBG(vg, "Write status data to the host\n");
+  len = 0; //TODO: implement write
+
+  return len;
+}
+
+/* Opens the console for device */
+static int cons_open (struct inode *inode, struct file *filp)
+{
+  struct vg_dev *vg;
+  int rc;
+
+  vg = container_of(inode->i_cdev, struct vg_dev, cdev);
+  DBG(vg, "Open the console device\n");
+
+  filp->private_data = vg;
+}
+
+/* Closes the console device */
+static int cons_release (struct inode *inode, struct file *filp)
+{
+  struct vg_dev *vg;
+
+  vg = (struct vg_dev *) filp->private_data;
+  DBG(vg, "Release the console device\n");
+  filp->private_data = NULL;
+}
+
+/* Writes data to the FIFO */
+static ssize_t fifo_write (struct file *filp,
+			   const char __user *buf,
+			   size_t count,
+			   loff_t *offp)
+{
+  ssize_t len;
+  struct vg_dev *vg;
+
+  vg = (struct vg_dev *) filp->private_data;
+  DBG(vg, "Write data to the FIFO\n");
+  len = 0; //TODO: implement write
+
+  return len;
+}
+
+/* Opens the FIFO device */
+static int fifo_open (struct inode *, struct file *)
+{
+  struct vg_dev *vg;
+  int rc;
+
+  vg = container_of(inode->i_cdev, struct vg_dev, fifo_dev);
+  DBG(vg, "Open the FIFO device\n");
+
+  filp->private_data = vg;
+}
+
+/* Closes the FIFO device */
+static int fifo_release (struct inode *, struct file *)
+{
+  struct vg_dev *vg;
+
+  vg = (struct vg_dev *) filp->private_data;
+  DBG(vg, "Release the FIFO device\n");
+  filp->private_data = NULL;
+}
+
+/* Handles the VMA open for a mapped FIFO request */
+static void fifo_vma_open(struct vm_area_struct *vma)
+{
+  struct usb_request *req;
+  
+  req = (usb_request *) vma->vm_private_data;
+  //TODO: add a counter
+}
+
+/* Handles the VMA close for a mapped FIFO request */
+static void fifo_vma_close(struct vm_area_struct *vma)
+{
+  struct usb_request *req;
+  
+  req = (usb_request *) vma->vm_private_data;
+  //TODO: Submit the request if the counter is 0
+}
+
+/* Handles a page fault for a mapped FIFO request */
+static struct page *fifo_vma_nopage(struct vm_area_struct *vma,
+				    unsigned long address,
+				    int *type)
+{
+  unsigned long offset;
+  struct usb_request *req;
+  struct page *page = NOPAGE_SIGBUS;
+  void *pageptr = NULL; /* default to "missing" */
+
+  req = (usb_request *) vma->vm_private_data;
+
+  offset = (address - vma->vm_start) + (vma->vm_pgoff << PAGE_SHIFT);
+  //offset >>= PAGE_SHIFT; /* offset is a number of pages */
+  if ((offset + PAGE_SIZE) <= req->length) {
+    page = virt_to_page(req->buf);
+    /* got it, now increment the count */
+    get_page(page);
+    if (type) {
+      *type = VM_FAULT_MINOR;
+    }
+  }
+
+  return page;
+}
+
+/* Maps a next FIFO buffer for userspace access */
+static int fifo_mmap (struct file *filp, struct vm_area_struct *vma)
+{
+  struct vg_dev *vg;
+  struct usb_request *req;
+  int rc;
+
+  vg = (struct vg_dev *) filp->private_data;
+  DBG(vg, "Map a FIFO buffer\n");
+  if ((rc = allocate_request(vg->bulk_in,
+			     vma->vm_end - vma->vm_start,
+			     &req)) != 0) {
+    ERROR(vg, "Unable to allocate a request of size %d\n",
+	  vma->vm_end - vma->vm_start);
+  }
+  
+  if (rc == 0) {
+    vma->vm_ops = &fifo_vm_ops;
+    vma->vm_flags |= VM_RESERVED;
+    vma->vm_private_data = req;
+    fifo_vma_open(vma);
+  }
+
+  return rc;
+}
+
+/* Send a given memory page over the USB channel */
+static ssize_t fifo_sendpage (struct file *filp,
+			      struct page *page,
+			      int offset,
+			      size_t length,
+			      loff_t *offp,
+			      int more)
+{
+  ssize_t len;
+  struct vg_dev *vg;
+
+  vg = (struct vg_dev *) filp->private_data;
+  DBG(vg, "Send a page over the USB channel\n");
+  len = 0; //TODO: implement sendpage
+
+  return len;
 }
 
 
