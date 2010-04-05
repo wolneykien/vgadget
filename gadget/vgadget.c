@@ -1139,106 +1139,149 @@ static int enable_endpoint(struct vg_dev *vg, struct usb_ep *ep,
  * Implementation section. Configuration procedures
  */
 
-/* Resets the interface setting and re-init endpoints */
-static int do_set_interface(struct vg_dev *vg, int altsetting)
+/* Resets the command-status interface */
+static int do_set_cmd_interface(struct vg_dev *vg, int altsetting)
 {
-	int rc = 0;
+  int rc;
 
- 	VDBG(vg, "Reset the interface\n");
+  rc = 0;
 
-	/* Disable the endpoints */
-	DBG(vg, "Disable all endpoints\n");
-	usb_ep_disable(vg->bulk_out);
-	usb_ep_disable(vg->bulk_in);
-	usb_ep_disable(vg->bulk_status_in);
+  /* Disable the endpoints */
+  DBG(vg, "Disable command-status endpoints\n");
+  usb_ep_disable(vg->bulk_out);
+  usb_ep_disable(vg->bulk_status_in);
 
-	if (altsetting < 0) {
-	  return rc;
-	}
+  if (altsetting < 0) {
+    return rc;
+  }
 
-	DBG(vg, "Setup the interface number %d\n", altsetting);
-
-	/* Enable the endpoints */
+  DBG(vg, "Setup the command-status interface\n");
+  /* Enable the endpoints */
 #ifdef CONFIG_USB_GADGET_DUALSPEED
-	if (vg->gadget->speed == USB_SPEED_HIGH) {
-	  DBG(vg, "Enable high-speed endpoints\n");
-	  if ((rc = enable_endpoint(vg,
-				    vg->bulk_out,
-				    &hs_bulk_out_desc)) != 0) {
-	    ERROR(vg, "Error while enable bulk-out endpoint\n");
-	  }
-	  if ((rc = enable_endpoint(vg,
-				    vg->bulk_in,
-				    &hs_bulk_in_desc)) != 0) {
-	    ERROR(vg, "Error while enable bulk-in endpoint\n");
-	  }
-	  if ((rc = enable_endpoint(vg,
-				    vg->bulk_status_in,
-				    &hs_bulk_status_in_desc)) != 0) {
-	    ERROR(vg, "Error while enable bulk-status-in endpoint\n");
-	  }
-	} else {
+  if (vg->gadget->speed == USB_SPEED_HIGH) {
+    DBG(vg, "Enable high-speed endpoints\n");
+    if ((rc = enable_endpoint(vg,
+			      vg->bulk_out,
+			      &hs_bulk_out_desc)) != 0) {
+      ERROR(vg, "Error while enable bulk-out endpoint\n");
+    }
+    if ((rc = enable_endpoint(vg,
+			      vg->bulk_status_in,
+			      &hs_bulk_status_in_desc)) != 0) {
+      ERROR(vg, "Error while enable bulk-status-in endpoint\n");
+    }
+  } else {
 #endif
-	  DBG(vg, "Enable full-speed endpoints\n");
-	  if ((rc = enable_endpoint(vg,
-				    vg->bulk_out,
-				    &fs_bulk_out_desc)) != 0) {
-	    ERROR(vg, "Error while enable bulk-out endpoint\n");
-	  }
-	  if ((rc = enable_endpoint(vg,
-				    vg->bulk_in,
-				    &fs_bulk_in_desc)) != 0) {
-	    ERROR(vg, "Error while enable bulk-in endpoint\n");
-	  }
-	  if ((rc = enable_endpoint(vg,
-				    vg->bulk_status_in,
-				    &fs_bulk_status_in_desc)) != 0) {
-	    ERROR(vg, "Error while enable bulk-status-in endpoint\n");
-	  }
+    DBG(vg, "Enable full-speed endpoints\n");
+    if ((rc = enable_endpoint(vg,
+			      vg->bulk_out,
+			      &fs_bulk_out_desc)) != 0) {
+      ERROR(vg, "Error while enable bulk-out endpoint\n");
+    }
+    if ((rc = enable_endpoint(vg,
+			      vg->bulk_status_in,
+			      &fs_bulk_status_in_desc)) != 0) {
+      ERROR(vg, "Error while enable bulk-status-in endpoint\n");
+    }
 #ifdef CONFIG_USB_GADGET_DUALSPEED
-	}
+  }
 #endif
 
-	return rc;
+  return rc;
+}
+
+/* Resets the FIFO interface */
+static int do_set_fifo_interface(struct vg_dev *vg, int altsetting)
+{
+  int rc;
+
+  rc = 0;
+
+  /* Disable the endpoints */
+  DBG(vg, "Disable FIFO endpoints\n");
+  usb_ep_disable(vg->bulk_in);
+
+  if (altsetting < 0) {
+    return rc;
+  }
+
+  DBG(vg, "Setup the FIFO interface\n");
+  /* Enable the endpoints */
+#ifdef CONFIG_USB_GADGET_DUALSPEED
+  if (vg->gadget->speed == USB_SPEED_HIGH) {
+    DBG(vg, "Enable high-speed endpoints\n");
+    if ((rc = enable_endpoint(vg,
+			      vg->bulk_in,
+			      &hs_bulk_in_desc)) != 0) {
+      ERROR(vg, "Error while enable bulk-in endpoint\n");
+    }
+  } else {
+#endif
+    DBG(vg, "Enable full-speed endpoints\n");
+    if ((rc = enable_endpoint(vg,
+			      vg->bulk_in,
+			      &fs_bulk_in_desc)) != 0) {
+      ERROR(vg, "Error while enable bulk-in endpoint\n");
+    }
+#ifdef CONFIG_USB_GADGET_DUALSPEED
+  }
+#endif
+
+  return rc;
+}
+
+/* Resets the interface setting and re-init endpoints */
+static int do_set_interface(struct vg_dev *vg,
+			    int index,
+			    int altsetting)
+{
+  int rc = 0;
+
+  switch (index) {
+  case 0:
+    rc = do_set_cmd_interface(vg, altsetting);
+    break;
+  case 1:
+    rc = do_set_fifo_interface(vg, altsetting);
+    break;
+  default:
+    ERROR(vg, "No such interface: %d\n", index);
+  }
+
+  return rc;
 }
 
 /* Change the operational configuration */
 static int do_set_config(struct vg_dev *vg, int new_config)
 {
-	int	rc = 0;
+  int	rc = 0;
 
-	VDBG(vg, "Reset the configuration\n");
+  VDBG(vg, "Reset the configuration\n");
 
-	/* Disable the single interface */
-	DBG(vg, "Disable the interface\n");
-	if (vg->config != 0) {
-		vg->config = 0;
-		rc = do_set_interface(vg, -1);
-	}
+  /* Disable the single interface */
+  DBG(vg, "Disable the interfaces\n");
+  if (vg->config != 0) {
+    vg->config = 0;
+    rc |= do_set_interface(vg, 0, -1);
+    rc |= do_set_interface(vg, 1, -1);
+  }
 
-	/* Enable the interface */
-	if (new_config > 0) {
-	  DBG(vg, "Setup the configuration number %d\n", new_config);
-		vg->config = new_config;
-		DBG(vg, "Enable the interface\n");
-		if ((rc = do_set_interface(vg, 0)) != 0) {
-			vg->config = 0;	// Reset on errors
-			ERROR(vg, "Error set up the interface\n");
-		} else {
-			char *speed;
+  if (new_config > 0) {
+    char *speed;
+    DBG(vg, "Setup the configuration number %d\n", new_config);
+    vg->config = new_config;
+    switch (vg->gadget->speed) {
+    case USB_SPEED_LOW:	   speed = "low";       break;
+    case USB_SPEED_FULL:   speed = "full";      break;
+    case USB_SPEED_HIGH:   speed = "high";      break;
+    default:               speed = "?";	        break;
+    }
+    INFO(vg, "Set up the %s speed config number %d\n",
+	 speed,
+	 vg->config);
+  }
 
-			switch (vg->gadget->speed) {
-			case USB_SPEED_LOW:	speed = "low";	break;
-			case USB_SPEED_FULL:	speed = "full";	break;
-			case USB_SPEED_HIGH:	speed = "high";	break;
-			default: 		speed = "?";	break;
-			}
-			INFO(vg, "Set up the %s speed config number %d\n",
-			     speed,
-			     vg->config);
-		}
-	}
-	return rc;
+  return rc;
 }
 
 
