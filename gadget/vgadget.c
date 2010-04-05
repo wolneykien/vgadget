@@ -838,6 +838,7 @@ static int vg_request_intf_reconf(struct vg_dev *vg,
   int rc;
   
   if (test_and_set_bit(INTF_RECONFIGURATION, &vg->flags) == 0) {
+    vg->intf_index = index;
     vg->intf_config[index] = new_confn;
     complete(&vg->main_event);
     rc = 0;
@@ -1264,6 +1265,17 @@ static int main_process(void *context)
 	ERROR(vg, "Error on device reconfiguration\n");
       }
       clear_bit(RECONFIGURATION, &vg->flags);
+    }
+    if (test_bit(INTF_RECONFIGURATION, &vg->flags)) {
+      /* Reconfigure an interface */
+      DBG(vg, "Reconfigure the device interface #%d\n",
+	  vg->intf_index);
+      if (do_set_interface(vg,
+			   vg->intf_index,
+			   vg->intf_config[vg->intf_index]) != 0) {
+	ERROR(vg, "Error on device interface reconfiguration\n");
+      }
+      clear_bit(INTF_RECONFIGURATION, &vg->flags);
     }
     wait_for_completion(&vg->main_event);
   }

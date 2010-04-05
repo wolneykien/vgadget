@@ -38,6 +38,7 @@ struct vg_dev {
 
         /* State and control */
         u8			config;
+        int                     intf_index;
         u8                      intf_config[2];
 	volatile unsigned int	req_tag;
         unsigned long		flags;
