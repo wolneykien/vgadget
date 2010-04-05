@@ -51,8 +51,8 @@ struct vg_dev {
         struct usb_ep		*bulk_status_in;
 
         /* Character devices */
-        struct cdev             *cons_dev;
-        struct cdev             *fifo_dev;
+        struct cdev             cons_dev;
+        struct cdev             fifo_dev;
 };
 
 /* Constatns for state flags */
