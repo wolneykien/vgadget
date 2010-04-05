@@ -461,6 +461,12 @@ static void __exit vg_cleanup(void)
 {
 	struct vg_dev	*vg = the_vg;
 
+	MDBG("Unregister the console device\n");
+	cdev_del(&vg->cons_dev);
+
+	MDBG("Unregister the FIFO device\n");
+	cdev_del(&vg->fifo_dev);
+
 	/* Unregister the driver iff the thread hasn't already done so */
 	if (test_and_clear_bit(REGISTERED, &vg->flags)) {
 	  MDBG("Unregister the gadget device driver\n");
