@@ -41,8 +41,8 @@ struct vg_dev {
 	volatile unsigned int	req_tag;
         unsigned long		flags;
         int			pid;
-        struct completion       reconf_event;
-        
+        struct completion       main_event;
+        struct completion       main_exit;
 
         /* Endpoints */
 	struct usb_ep		*ep0;

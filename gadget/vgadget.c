@@ -1171,7 +1171,30 @@ static int do_set_config(struct vg_dev *vg, int new_config)
 /*
  * Implementation section. Background processes
  */
+static int main_process(void *context)
+{
+  int rc;
+  struct vg_dev *vg;
 
+  vg = (struct vg_dev*) context;
+
+  rc = 0;
+  wait_for_completion(&vg->main_event);
+  while (test_bit(REGISTERED, &vg->flags)) {
+    DBG(vg, "Process an event\n");
+    if (test_bit(RECONFIGURATION, &vg->flags)) {
+      /* Reconfigure the device */
+      DBG(vg, "Reconfigure the device\n");
+      if (do_set_config(vg, vg->config) != 0) {
+	ERROR(vg, "Error on device reconfiguration\n");
+      }
+      clear_bit(RECONFIGURATION, &vg->flags);
+    }
+  }
+
+  complete_and_exit(&vg->main_exit, rc);
+  return rc;
+}
 
 
 
