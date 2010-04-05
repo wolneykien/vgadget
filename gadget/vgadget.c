@@ -397,6 +397,41 @@ MODULE_PARM_DESC(serial, "Gadget serial number");
 /* The gadget device object */
 static struct vg_dev *the_vg;
 
+/* Starts the main process */
+static int __init vg_main_process_start(struct vg_dev *vg)
+{
+  int rc;
+
+  DBG(vg, "Initialize synchronization objects\n");
+  init_completion(&the_vg->main_event);
+  init_completion(&the_vg->main_exit);
+  DBG(vg, "Start the main process\n");
+  set_bit(RUNNING, &vg->flags);
+  rc = kernel_thread(main_process,
+		     the_vg,
+		     (CLONE_VM | CLONE_FS | CLONE_FILES));
+  if (rc > 0) {
+    the_vg->pid = rc;
+    rc = 0;
+  }
+
+  return rc;
+}
+
+/* Terminates the main process */
+static int __exit vg_main_process_terminate(struct vg_dev*vg)
+{
+  int rc;
+
+  rc = 0;
+  DBG(vg, "Terminate the main process");
+  set_bit(RUNNING, &vg->flags);
+  complete(&vg->main_event);
+  wait_for_completion(&vg->main_exit);
+
+  return rc;
+}
+
 /* Initializes and registeres the module  */
 static int __init vg_init(void)
 {
@@ -425,6 +460,8 @@ static int __init vg_init(void)
 	} else {
 	  MERROR("Unable to allocate the gadget device object\n");
 	}
+
+	rc = vg_main_process_start(the_vg);
 
 	if (rc == 0) {
 	  MDBG("Register the console device\n");
@@ -460,6 +497,9 @@ module_init(vg_init);
 static void __exit vg_cleanup(void)
 {
 	struct vg_dev	*vg = the_vg;
+
+	/* Terminate the main process */
+	vg_main_process_terminate(the_vg);
 
 	MDBG("Unregister the console device\n");
 	cdev_del(&vg->cons_dev);

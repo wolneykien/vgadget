@@ -56,6 +56,7 @@ struct vg_dev {
 };
 
 /* Constatns for state flags */
-#define REGISTERED		0x00
-#define RECONFIGURATION         0x01
-#define SUSPENDED		0x02
+#define REGISTERED              0x00
+#define RUNNING                 0x01
+#define RECONFIGURATION         0x02
+#define SUSPENDED               0x03
