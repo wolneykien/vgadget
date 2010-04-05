@@ -92,7 +92,7 @@ static struct {
 #define STRING_CONFIG		4
 
 /* There is only one configuration. */
-#define	CONFIG_VALUE		1
+#define	NUMBER_OF_CONFIGS	1
 
 /* Endpoint 0 buffer size */
 #define EP0_BUFSIZE 1024
@@ -125,7 +125,7 @@ config_desc = {
 
 	/* wTotalLength computed by usb_gadget_config_buf() */
 	.bNumInterfaces =	2,
-	.bConfigurationValue =	CONFIG_VALUE,
+	.bConfigurationValue =	1,
 	.bmAttributes =		USB_CONFIG_ATT_ONE | USB_CONFIG_ATT_SELFPOWER,
 	.bMaxPower =		1,	// self-powered
 };
@@ -813,6 +813,42 @@ static void vg_unbind(struct usb_gadget *gadget)
 	vg->dma_pool = NULL;
 }
 
+/* Request device reconfiguration */
+static int vg_request_reconf(struct vg_dev *vg, u8 new_confn)
+{
+  int rc;
+
+  if (test_and_set_bit(RECONFIGURATION, &vg->flags) == 0) {
+    vg->config = new_confn;
+    complete(&vg->main_event);
+    rc = 0;
+  } else {
+    WARN(vg, "An other reconfiguration is in progress\n");
+    rc = -ENOMEM;
+  }
+
+  return rc;
+}
+
+/* Request device interface reconfiguration */
+static int vg_request_intf_reconf(struct vg_dev *vg,
+				  int index,
+				  u8 new_confn)
+{
+  int rc;
+  
+  if (test_and_set_bit(INTF_RECONFIGURATION, &vg->flags) == 0) {
+    vg->intf_config[index] = new_confn;
+    complete(&vg->main_event);
+    rc = 0;
+  } else {
+    WARN(vg, "An other interface reconfiguration is in progress\n");
+    rc = -ENOMEM;
+  }
+
+  return rc;
+}
+
 /* Class setup request processor */
 static int class_setup_req(struct vg_dev *vg,
 			   const struct usb_ctrlrequest *ctrl,
@@ -977,10 +1013,10 @@ static int standard_setup_req(struct vg_dev *vg,
 		if (ctrl->bRequestType != (USB_DIR_OUT | USB_TYPE_STANDARD |
 				USB_RECIP_DEVICE))
 			break;
-		if (wValue == CONFIG_VALUE || wValue == 0) {
-		  //vg->new_config = wValue;
-		  //TODO: setup new config, may not sleep
-			value = DELAYED_STATUS;
+		if (wValue >= 0 && wValue <= NUMBER_OF_CONFIGS) {
+		  if ((value = vg_request_reconf(vg, wValue)) == 0) {
+		    value = DELAYED_STATUS;
+		  }
 		}
 		break;
 	case USB_REQ_GET_CONFIGURATION:
@@ -999,10 +1035,13 @@ static int standard_setup_req(struct vg_dev *vg,
 		if (ctrl->bRequestType != (USB_DIR_OUT| USB_TYPE_STANDARD |
 				USB_RECIP_INTERFACE))
 			break;
-		if (vg->config && wIndex == 0) {
-		  //vg->new_config = wValue;
-		  //TODO: setup new interface, may not sleep
-			value = DELAYED_STATUS;
+		if (vg->config) {
+		  if ((value =
+		       vg_request_intf_reconf(vg,
+					      wIndex,
+					      wValue)) == 0) {
+		    value = DELAYED_STATUS;
+		  }
 		}
 		break;
 	case USB_REQ_GET_INTERFACE:
@@ -1012,13 +1051,9 @@ static int standard_setup_req(struct vg_dev *vg,
 			break;
 		if (!vg->config)
 			break;
-		if (wIndex != 0) {
-			value = -EDOM;
-			break;
-		}
 		value = min(wLength, (u16) 1);
 		allocate_request(vg->ep0, EP0_BUFSIZE, res_req);
-		*(u8 *) (*res_req)->buf = 0;
+		*(u8 *) (*res_req)->buf = vg->intf_config[wIndex];
 		set_request_length(*res_req, value);
 		break;
 

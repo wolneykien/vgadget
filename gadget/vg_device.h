@@ -38,6 +38,7 @@ struct vg_dev {
 
         /* State and control */
         u8			config;
+        u8                      intf_config[2];
 	volatile unsigned int	req_tag;
         unsigned long		flags;
         int			pid;
@@ -59,4 +60,5 @@ struct vg_dev {
 #define REGISTERED              0x00
 #define RUNNING                 0x01
 #define RECONFIGURATION         0x02
-#define SUSPENDED               0x03
+#define INTF_RECONFIGURATION    0x03
+#define SUSPENDED               0x04
