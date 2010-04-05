@@ -595,8 +595,14 @@ static int allocate_request(struct usb_ep *ep,
 
   if (rc == 0) {
     MDBG("Allocate a buffer for the request of %d b\n", size);
-    (*req)->buf =
-      dma_pool_alloc(vg->dma_pool, GFP_KERNEL, &(*req)->dma);
+    if (size <= DMA_POOL_BUF_SIZE) {
+      (*req)->buf =
+	dma_pool_alloc(vg->dma_pool, GFP_KERNEL, &(*req)->dma);
+    } else {
+      MWARN("Allocate a large coherent DMA buffer not from the pool\n");
+      (*req)->buf =
+	dma_alloc_coherent(vg->gadget->dev, size, &(*req)->dma, GFP_KERNEL);
+    }
     if (*req->buf == NULL) {
       rc = -ENOMEM;
       MERROR("Unable to allocate a buffer for the request\n");
@@ -620,12 +626,17 @@ static int free_request(struct usb_ep *ep,
 
   if (req->buf != NULL) {
     MDBG("Free the buffer of a request for endpoint %s\n", ep->name);
-    dma_pool_free(vg->dma_pool, req->buf, req->dma);
+    if (size <= DMA_POOL_BUF_SIZE) {
+      dma_pool_free(vg->dma_pool, req->buf, req->dma);
+    } else {
+      dma_free_coherent(vg->gadget->dev, req->length, req->buf, req->dma);
+    }
+
     req->buf = NULL;
     req->dma = 0;
   }
   
-  MDBG("Free a request buffer for endpoint %s\n", ep->name);
+  MDBG("Free a request for endpoint %s\n", ep->name);
   usb_ep_free_request(ep, req);
 
   rc = 0;
@@ -634,10 +645,11 @@ static int free_request(struct usb_ep *ep,
 
 /* Sets the size of the request data */
 static void set_request_length(struct urb_request *req,
-			       int len,
-			       int wlen)
+			       int len)
 {
-  req->length = len;
+  if (size <= DMA_POOL_BUF_SIZE) {
+    req->length = len;
+  }
 }
 
 /* Enqueues a URB request */
