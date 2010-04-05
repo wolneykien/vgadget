@@ -1230,6 +1230,7 @@ static int main_process(void *context)
       }
       clear_bit(RECONFIGURATION, &vg->flags);
     }
+    wait_for_completion(&vg->main_event);
   }
 
   complete_and_exit(&vg->main_exit, rc);
