@@ -366,6 +366,8 @@ static struct file_operations fifo_fops = {
 	.write          = fifo_write,
 	.open		= fifo_open,
 	.release	= fifo_release,
+	.splice_write   = generic_splice_sendpage,
+	.sendpage       = fifo_sendpage,
 };
 
 
@@ -391,9 +393,6 @@ MODULE_PARM_DESC(product_name, "Product name");
 
 module_param_named(serial, mod_data.serial, charp, S_IRUGO);
 MODULE_PARM_DESC(serial, "Gadget serial number");
-
-module_param_named(file, mod_data.filename, charp, S_IRUGO);
-MODULE_PARM_DESC(file, "File to read from");
 
 /* The gadget device object */
 static struct vg_dev *the_vg;
@@ -457,9 +456,6 @@ static int __init vg_init(void)
 module_init(vg_init);
 
 
-/* Wake up the main thread prototype */
-static void wakeup_thread(struct vg_dev *vg);
-
 /* Unregisteres the module, frees up the allocated resources */
 static void __exit vg_cleanup(void)
 {
@@ -491,14 +487,6 @@ static int __init vg_alloc(struct vg_dev **vg)
 	*vg = kmalloc(sizeof *vg, GFP_KERNEL);
 	if (vg) {
 	  memset(*vg, 0, sizeof *vg);
-	  MDBG("Allocate synchronization objects\n");
-	  init_MUTEX(&(*vg)->cmd_read.mutex);
-	  init_MUTEX(&(*vg)->cmd_read.running);
-//	  init_MUTEX(&(*vg)->file_send.mutex);
-//	  init_MUTEX(&(*vg)->file_send.running);
-	  sema_init(&(*vg)->cmd_read.limit, maxreads);
-	  sema_init(&(*vg)->cmd_queue_sem, 0);
-//	  sema_init(&(*vg)->file_send.limit, maxwrites);
 	  rc = 0;
 	} else {
 	  rc = -ENOMEM;
@@ -766,108 +754,12 @@ static int __init vg_bind(struct usb_gadget *gadget)
 	return rc;
 }
 
-/* Read-ahead loop prototype */
-static int vg_cmd_read_ahead_loop(void *context);
-
-/* Starts the CMD read-ahead process */
-static int vg_cmd_read_ahead_start(struct vg_dev *vg)
-{
-  int rc;
-
-  if ((rc = down_interruptible(&vg->cmd_read.running)) == 0) {
-    MDBG("Set up the command read-ahead process\n");
-    rc = kernel_thread(vg_cmd_read_ahead_loop,
-		       vg,
-		       (CLONE_VM | CLONE_FS | CLONE_FILES));
-    if (rc >= 0) {
-      set_bit(RUNNING, &vg->cmd_read.flags);
-      vg->cmd_read.pid = rc;
-      rc = 0;
-    }
-  } else {
-    rc = -ERESTARTSYS;
-  }
-
-  return rc;
-}
-
-/* Stops the CMD read-ahead process */
-static int vg_cmd_read_ahead_stop(struct vg_dev *vg)
-{
-  int rc;
-
-  rc = 0;
-  /* Stop the process only if it is running */
-  if (test_and_clear_bit(RUNNING, &vg->cmd_read.flags)) {
-    DBG(vg, "Stop the CMD read-ahead process\n");
-    //TODO: write an implementation
-  }
-
-  return rc;
-}
-
-/* Send-ahead loop prototype */
-//static int vg_file_send_ahead_loop(void *context);
-
-/* Starts the FILE send-ahead process */
-//static int vg_file_send_ahead_start(struct vg_dev *vg)
-//{
-//  int rc;
-//
-//  if ((rc = down_interruptible(&vg->file_send.running)) == 0) {
-//    MDBG("Set up the file send-ahead process\n");
-//    rc = kernel_thread(vg_file_send_ahead_loop,
-//		       vg,
-//		       (CLONE_VM | CLONE_FS | CLONE_FILES));
-//    if (rc >= 0) {
-//      set_bit(RUNNING, &vg->file_send.flags);
-//      vg->file_send.pid = rc;
-//      rc = 0;
-//    }
-//  } else {
-//    rc = -ERESTARTSYS;
-//  }
-//
-//  return rc;
-//}
-
-/* Stops the FILE send-ahead process */
-//static int vg_file_send_ahead_stop(struct vg_dev *vg)
-//{
-//  int rc;
-//
-//  rc = 0;
-//  /* Stop the process only if it is running */
-//  if (test_and_clear_bit(RUNNING, &vg->file_send.flags)) {
-//    DBG(vg, "Stop the FILE send-ahead process\n");
-//     //TODO: write an implementation
-//  }
-//
-//  return rc;
-//}
-
-/* Stop all of the threads */
-static int vg_stop_processes(struct vg_dev *vg)
-{
-  int rc;
-  
-  rc = 0;
-  rc |= vg_cmd_read_ahead_stop(vg);
-  //  rc |= vg_file_send_ahead_stop(vg);
-
-  return rc;
-}
-
 /* Unbind procedure implementation */
 static void vg_unbind(struct usb_gadget *gadget)
 {
 	struct vg_dev *vg = get_gadget_data(gadget);
 
 	clear_bit(REGISTERED, &vg->flags);
-
-	/* Stop the ahead-working processes */
-	DBG(vg, "Stop the background processes\n");
-	vg_stop_processes(vg);
 
 	set_gadget_data(gadget, NULL);
 	DBG(vg, "Free the DMA pool\n");
@@ -1144,153 +1036,6 @@ static void vg_disconnect(struct usb_gadget *gadget)
 	//TODO: stop all transfer processes, may not sleep
 }
 
-
-
-/*
- * Implementation section. Bulk endpoint procedures
- */
-
-/* Add a given USB request to a given queue */
-static int cmd_request_offer(struct vg_dev *vg,
-			     struct urs_request *req)
-{
-  struct vg_req_entry *queue;
-  struct vg_req_entry *entry;
-  int rc;
-
-  if (down_interruptible(&vg->cmd_read.mutex) == 0) {
-    /* Make a new queue entry */
-    entry = kmalloc(sizeof struct vg_req_entry, GFP_KERNEL);
-    if (entry != NULL) {
-      /* Offer the new entry to the queue */
-      etnry->req = req;
-      etnry->next = NULL;
-      rc = 0;
-      /* Send notifications */
-      up(&vg->cmd_queue_sem);
-      wake_up(&vg->cmd_read.wait);
-    } else {
-      err("Unable to allocate a queue entry");
-      rc = -ENOMEM;
-    }
-
-    /* Offer the entry to the queue */
-    if (rc == 0) {
-      if (vg->cmd_queue != NULL) {
-	queue = vg->cmd_queue;
-	while (queue->next != NULL) {
-	  queue = queue->next;
-	}
-	queue->next = entry;
-      } else {
-	vg->cmd_queue = entry;
-      }
-    }
-    up(&vg->cmd_read.mutex);
-    return rc;
-  } else {
-    return -ERESTARTSYS;
-  }
-}
-
-/* Takes one USB request from the head of the queue if any */
-static int cmd_request_try_take(struct vg_dev *vg,
-				struct urs_request **req)
-{
-  struct vg_req_entry *next;
-
-  if (down_trylock(&vg->cmd_queue_sem) == 0) {
-    if (down_interruptible(&vg->cmd_read.mutex) == 0) {
-      if (vg->cmd_queue != NULL) {
-	*req = vg->cmd_queue->res;
-	next = vg->cmd_queue->next;
-	kfree(vg->queue);
-	vg->queue = next;
-	/* Invite the read-ahead procedure to continue */
-	up(&vg->cmd_read.limit);
-      } else {
-	*req = NULL;
-      }
-      up(&vg->cmd_read.mutex);
-      return 0;
-    } else {
-      *req = NULL;
-      return -ERESTARTSYS;
-    }
-  } else {
-    *req = NULL;
-    return 0;
-  }
-}
-
-/* Takes one USB request from the head of the queue */
-static int cmd_request_take(struct vg_dev *vg,
-			    struct usb_request **req)
-{
-  int rc;
-  
-  /* Try to take an USB from the queue */
-  while ((rc = cmd_request_try_take(vg, req)) == 0) {
-    if (*req != NULL) {
-      /* Exit with the taken USB */
-      break;
-    } else {
-      /* Wait for the next available USB */
-      rc = down_interruptible(&vg->cmd_queue_sem);
-    }
-  }
-  return rc;
-}
-
-/* Handles a finished request of a bulk-in (CMD) endpoint */
-static void cmd_complete(struct usb_ep *ep, struct usb_request *req)
-{
-  struct vg_dev *vg = (struct vg_dev *) ep->driver_data;
-
-  ep_complete_common(ep, req);
-  if (cmd_request_offer(vg, req) != 0) {
-    MERROR("Unable to enqueue the finished request for endpoint %s\n",
-	   ep->name);
-    free_request(ep, req);
-  }
-}
-
-/* Enqueues a next command read-ahead request */
-static int cmd_request_enqueue(struct vg_dev *vg)
-{
-  static struct usb_request *req;
-  void *buf;
-  int rc;
-
-  if ((rc = down_interruptible(&vg->cmd_read.limit)) == 0) {
-    /* Exit immediately if the read-ahead process has been terminated */
-    if (! test_bit(RUNNING, &vg->cmd_read.flags)) {
-      return 1;
-    }
-    /* Allocate a request */
-    if ((rc = allocate_request(vg->bulk_out,
-			       DMA_POOL_BUF_SIZE,
-			       &req)) == 0) {
-      /* Enqueue the request */
-      DBG(vg, "Submit a command read-ahead request\n");
-      if ((rc = enqueue_request(vg->bulk_out, req, cmd_complete)) != 0) {
-	ERROR(vg, "Failed submitting read-ahead request\n");
-      }
-    }
-
-    if (rc != 0) {
-      /* Cleanup on error */
-      if (req != NULL) {
-	free_request(req);
-      }
-      up(&vg->cmd_read.limit);
-    }
-    return rc;
-  } else {
-    return -ERESTARTSYS;
-  }
-}
-
 /* Enables the given endpoint */
 static int enable_endpoint(struct vg_dev *vg, struct usb_ep *ep,
 			   const struct usb_endpoint_descriptor *d)
@@ -1421,22 +1166,7 @@ static int do_set_config(struct vg_dev *vg, int new_config)
  * Implementation section. Background processes
  */
 
-/* Read-ahead loop */
-static int vg_cmd_read_ahead_loop(void *context)
-{
-  int rc;
-  struct vg_dev *vg;
 
-  vg = (struct vg_dev *) context;
-
-  do {
-    rc = cmd_request_enqueue(vg);
-  } while (rc == 0);
-
-  DBG("Read ahead process finished (%d)\n", rc);
-  up(&vg->cmd_read.running);
-  return rc;
-}
 
 
 #ifdef DEBUG

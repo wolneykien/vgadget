@@ -24,25 +24,6 @@
  * A gadget device object
  */
 
-/* Define thread flag bits */
-#define RUNNING 1
-
-/* A thread control structure */
-struct vg_thread_ctl {
-        struct semaphore        running;
-	int			pid;
-        unsigned long		flags;
-        struct semaphore        mutex;
-        struct semaphore        limit;
-        wait_queue_head_t       wait;
-};
-
-/* A request queue entry */
-struct vg_req_entry {
-  struct usb_request *req;
-  struct vg_req_entry *next;
-}
-
 /* DMA pool parameters */
 
 #define DMA_POOL_NAME "vgadget"
@@ -59,6 +40,9 @@ struct vg_dev {
         u8			config;
 	volatile unsigned int	req_tag;
         unsigned long		flags;
+        int			pid;
+        struct completion       reconf_event;
+        
 
         /* Endpoints */
 	struct usb_ep		*ep0;
@@ -66,28 +50,12 @@ struct vg_dev {
 	struct usb_ep		*bulk_in;
         struct usb_ep		*bulk_status_in;
 
-        /* Read/send-ahead processes */
-        struct vg_thread_ctl    cmd_read;
-        struct vg_req_entry     *cmd_queue;
-        struct semaphore        cmd_queue_sem;
+        /* Character devices */
         struct cdev             *cons_dev;
         struct cdev             *fifo_dev;
-        /*struct vg_thread_ctl    file_send;*/
 };
 
 /* Constatns for state flags */
-#define REGISTERED		0
-#define CLEAR_BULK_HALTS	1
-#define SUSPENDED		2
-
-/* The type of gadget device function */
-typedef void (*vg_dev_proc_t)(struct vg_dev *);
-
-
-/* Lifecycle prototypes */
-static int vg_alloc(struct vg_dev **vg);
-static void vg_free(struct vg_dev *vg);
-
-/* Exception handling prototypes */
-static void raise_exception(struct vg_dev *vg, enum vg_state new_state);
-static int inline exception_in_progress(struct vg_dev *vg);
+#define REGISTERED		0x00
+#define RECONFIGURATION         0x01
+#define SUSPENDED		0x02
