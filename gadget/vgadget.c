@@ -1459,10 +1459,15 @@ struct usb_mapped_request {
 /* Handles the VMA open for a mapped FIFO request */
 static int fifo_vma_open(struct vm_area_struct *vma)
 {
+  int rc;
   struct usb_mapped_request *mreq;
   
   mreq = (usb_mapped_request *) vma->vm_private_data;
-  return atomic_inc_return(&mreq->refcnt);
+  
+  rc = atomic_inc_return(&mreq->refcnt);
+  MDBG("Add a new reference to the request (%d)\n", rc);
+
+  return rc;
 }
 
 /* Handles the VMA close for a mapped FIFO request */
@@ -1476,7 +1481,9 @@ static int fifo_vma_close(struct vm_area_struct *vma)
   vg = (vg_dev *) mreq->req->context;
   
   rc = atomic_dec_return(&mreq->refcnt);
+  MDBG("Remove a reference to the request (%d)\n", rc);
   if (rc == 0) {
+    DBG(vg, "Enqueue a mapped request\n");
     if (enquque_request(vg->bulk_in, mreq->req, fifo_complete) != 0) {
       ERROR(vg, "Unable to enqueue a mapped request\n");
     }
