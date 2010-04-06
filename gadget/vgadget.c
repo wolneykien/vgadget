@@ -1470,6 +1470,13 @@ static int fifo_vma_open(struct vm_area_struct *vma)
   return rc;
 }
 
+/* Handles a finished FIFO request */
+static void fifo_complete(struct usb_ep *ep, struct usb_request *req)
+{
+  ep_complete_common(ep, req);
+  free_request(ep, req);
+}
+
 /* Handles the VMA close for a mapped FIFO request */
 static int fifo_vma_close(struct vm_area_struct *vma)
 {
