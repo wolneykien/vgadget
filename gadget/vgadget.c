@@ -1564,10 +1564,49 @@ static ssize_t fifo_sendpage (struct file *filp,
 {
   ssize_t len;
   struct vg_dev *vg;
+  struct usb_request req;
 
   vg = (struct vg_dev *) filp->private_data;
   DBG(vg, "Send a page over the USB channel\n");
-  len = 0; //TODO: implement sendpage
+
+  DBG(vg, "Allocate a request for page delivery\n");
+  if ((req = usb_ep_alloc_request(vg->bulk_in, GFP_KERNEL)) != NULL) {
+    req->buf = page->virtual;
+    req->complete = ep_complete_common;
+    req->length = length;
+    req->zero = 0;
+    if ((req->dma = dma_map_page(vg->gadget->dev,
+				 page,
+				 offset,
+				 length,
+				 DMA_TO_DEVICE)) != 0) {
+      struct completion req_compl;
+      init_completion(&req_compl);
+      req->context = &req_compl;
+      if (enqueue_request(req) == 0) {
+	DBG(vg, "Wait for the request to complete\n");
+	wait_for_completion(&req_compl);
+	DBG(vg, "Return the actual amount sent (%d/%d)\n",
+	    legnth,
+	    req->actual);
+	len = req->actual;
+	DBG(vg, "Free a request for page delivery\n");
+	dma_unmap_page(vg->gadget->dev, req->dma, length,
+		       DMA_TO_DEVICE);
+	usb_ep_free_request(vg->bulk_in, req);
+      } else {
+	ERROR(vg, "Unable to enqueue a USB request\n");
+	len = -EFAULT;
+      }
+    } else {
+      ERROR(vg, "Unable to map a page for DMA\n");
+      len = -EFAULT;
+    }
+  } else {
+    ERROR(vg, "Unable to allocate a request for endpoint %s\n",
+	  ep->name);
+    len = -ENOMEM;
+  }
 
   return len;
 }
