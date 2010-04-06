@@ -1494,6 +1494,7 @@ static int fifo_vma_close(struct vm_area_struct *vma)
     if (enquque_request(vg->bulk_in, mreq->req, fifo_complete) != 0) {
       ERROR(vg, "Unable to enqueue a mapped request\n");
     }
+    kfree(mreq);
   }
 
   return rc;
