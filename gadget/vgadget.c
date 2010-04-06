@@ -1561,6 +1561,23 @@ static int fifo_mmap (struct file *filp, struct vm_area_struct *vma)
   return rc;
 }
 
+/* Handles a finished FIFO request and send notification */
+static void fifo_complete_notify(struct usb_ep *ep,
+				 struct usb_request *req)
+{
+  struct completion *req_compl;
+
+  ep_complete_common(ep, req);
+
+  req_compl = (struct completion *) req->context;
+  if (req_cmopl != NULL) {
+    complete(req_compl);
+  } else {
+    MWARN("No nofinication handler. Free the request\n");
+    free_request(ep, req);
+  }
+}
+
 /* Send a given memory page over the USB channel */
 static ssize_t fifo_sendpage (struct file *filp,
 			      struct page *page,
@@ -1579,7 +1596,7 @@ static ssize_t fifo_sendpage (struct file *filp,
   DBG(vg, "Allocate a request for page delivery\n");
   if ((req = usb_ep_alloc_request(vg->bulk_in, GFP_KERNEL)) != NULL) {
     req->buf = page->virtual;
-    req->complete = ep_complete_common;
+    req->complete = fifo_complete_notify;
     req->length = length;
     req->zero = 0;
     if ((req->dma = dma_map_page(vg->gadget->dev,
@@ -1587,23 +1604,30 @@ static ssize_t fifo_sendpage (struct file *filp,
 				 offset,
 				 length,
 				 DMA_TO_DEVICE)) != 0) {
-      struct completion req_compl;
-      init_completion(&req_compl);
-      req->context = &req_compl;
-      if (enqueue_request(req) == 0) {
-	DBG(vg, "Wait for the request to complete\n");
-	wait_for_completion(&req_compl);
-	DBG(vg, "Return the actual amount sent (%d/%d)\n",
-	    legnth,
-	    req->actual);
-	len = req->actual;
-	DBG(vg, "Free a request for page delivery\n");
-	dma_unmap_page(vg->gadget->dev, req->dma, length,
-		       DMA_TO_DEVICE);
-	usb_ep_free_request(vg->bulk_in, req);
+      struct completion *req_compl;
+      if ((req_compl =
+	   kmalloc(sizeof struct completion, GFP_KRNEL) != NULL)) {
+	init_completion(req_compl);
+	req->context = req_compl;
+	if (enqueue_request(req) == 0) {
+	  DBG(vg, "Wait for the request to complete\n");
+	  wait_for_completion(&req_compl);
+	  DBG(vg, "Return the actual amount sent (%d/%d)\n",
+	      legnth,
+	      req->actual);
+	  len = req->actual;
+	  DBG(vg, "Free a request for page delivery\n");
+	  dma_unmap_page(vg->gadget->dev, req->dma, length,
+			 DMA_TO_DEVICE);
+	  usb_ep_free_request(vg->bulk_in, req);
+	  kfree(req_compl);
+	} else {
+	  ERROR(vg, "Unable to enqueue a USB request\n");
+	  len = -EFAULT;
+	}
       } else {
-	ERROR(vg, "Unable to enqueue a USB request\n");
-	len = -EFAULT;
+	ERROR(vg, "Unable to allocate a completion object\n");
+	len = -ENOMEM;
       }
     } else {
       ERROR(vg, "Unable to map a page for DMA\n");
