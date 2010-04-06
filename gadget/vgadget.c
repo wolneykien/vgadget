@@ -18,24 +18,20 @@
  * If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <linux/blkdev.h>
 #include <linux/completion.h>
-#include <linux/dcache.h>
-#include <linux/delay.h>
 #include <linux/device.h>
-#include <linux/fcntl.h>
-#include <linux/file.h>
+#include <linux/cdev.h>
+#include <linux/types.h>
 #include <linux/fs.h>
-#include <linux/kref.h>
 #include <linux/kthread.h>
-#include <linux/limits.h>
-#include <linux/slab.h>
 #include <linux/string.h>
-#include <linux/freezer.h>
-#include <linux/utsname.h>
-
 #include <linux/usb/ch9.h>
 #include <linux/usb/gadget.h>
+#include <linux/dmapool.h>
+#include <asm/dma-mapping.h>
+#include <asm/bitops.h>
+#include <asm/atomic.h>
+#include <linux/mm.h>
 
 /*
  * Local inclusions
@@ -416,12 +412,12 @@ static int __init vg_main_process_start(struct vg_dev *vg)
   int rc;
 
   DBG(vg, "Initialize synchronization objects\n");
-  init_completion(&the_vg->main_event);
-  init_completion(&the_vg->main_exit);
+  init_completion(&vg->main_event);
+  init_completion(&vg->main_exit);
   DBG(vg, "Start the main process\n");
   set_bit(RUNNING, &vg->flags);
   rc = kernel_thread(main_process,
-		     the_vg,
+		     vg,
 		     (CLONE_VM | CLONE_FS | CLONE_FILES));
   if (rc > 0) {
     the_vg->pid = rc;
@@ -474,7 +470,9 @@ static int __init vg_init(void)
 	  MERROR("Unable to allocate the gadget device object\n");
 	}
 
-	rc = vg_main_process_start(the_vg);
+	if (rc == 0) {
+	  rc = vg_main_process_start(the_vg);
+	}
 
 	if (rc == 0) {
 	  MDBG("Register the console device\n");
@@ -604,6 +602,7 @@ static int allocate_request(struct usb_ep *ep,
     (*req)->complete = NULL;
     (*req)->length = 0;
     (*req)->zero = 0;
+    (*req)->context = NULL;
   }
 
   if (rc == 0) {
@@ -680,7 +679,9 @@ static int enqueue_request(struct usb_ep *ep,
       ep-name,
       req->length);
   req->complete = complete;
-  req->context = vg;
+  if (req->context == NULL) {
+    req->context = vg;
+  }
   rc = usb_ep_queue(ep, req, GFP_ATOMIC);
   if (rc != 0 && rc != -ESHUTDOWN) {
     /* Can't do much more than wait for a reset */
@@ -753,10 +754,6 @@ static int __init vg_bind(struct usb_gadget *gadget)
 			  DMA_POOL_BUF_SIZE,
 			  PAGE_SIZE,
 			  PAGE_SIZE);
-
-	if ((rc = check_parameters(vg)) != 0) {
-	  ERROR(vg, "Invalid parameter(s) passed\n");
-	}
 
 	if (rc == 0) {
 	  /* Find all the endpoints we will use */
@@ -1482,6 +1479,7 @@ static int fifo_vma_close(struct vm_area_struct *vma)
 {
   struct usb_mapped_request *mreq;
   struct vg_dev *vg;
+  struct usb_request *req;
   int rc;
   
   mreq = (usb_mapped_request *) vma->vm_private_data;
@@ -1490,11 +1488,12 @@ static int fifo_vma_close(struct vm_area_struct *vma)
   rc = atomic_dec_return(&mreq->refcnt);
   MDBG("Remove a reference to the request (%d)\n", rc);
   if (rc == 0) {
+    req = mreq->req;
+    kfree(mreq);
     DBG(vg, "Enqueue a mapped request\n");
-    if (enquque_request(vg->bulk_in, mreq->req, fifo_complete) != 0) {
+    if (enquque_request(vg->bulk_in, req, fifo_complete) != 0) {
       ERROR(vg, "Unable to enqueue a mapped request\n");
     }
-    kfree(mreq);
   }
 
   return rc;
@@ -1502,9 +1501,11 @@ static int fifo_vma_close(struct vm_area_struct *vma)
 
 /* Handles a page fault for a mapped FIFO request */
 static int fifo_vma_fault(struct vm_area_struct *vma,
-				   struct vm_fault *vmf)
+			  struct vm_fault *vmf)
 {
   int rc;
+
+  MDBG("Handle page fault request at 0x%lx\n", vmf->pgoff);
   //vmf->page = NOPAGE_SIGBUS;
   vmf->page = virt_to_page(req->buf + vmf->pgoff);
   if (vmf->page != NULL) {
@@ -1512,6 +1513,7 @@ static int fifo_vma_fault(struct vm_area_struct *vma,
     vmf->flags |= VM_FAULT_MINOR;
     rc = 0;
   } else {
+    MERROR("Unable to map the missing page\n");
     vmf->flags |= VM_FAULT_NOPAGE;
     rc = -EFAULT;
   }
@@ -1534,11 +1536,12 @@ static int fifo_mmap (struct file *filp, struct vm_area_struct *vma)
   int rc;
 
   vg = (struct vg_dev *) filp->private_data;
-  DBG(vg, "Map a FIFO buffer\n");
+  DBG(vg, "Map a FIFO buffer of %d bytes\n",
+      vma->vm_end - vma->vm_start);
   if ((rc = allocate_request(vg->bulk_in,
 			     vma->vm_end - vma->vm_start,
 			     &req)) != 0) {
-    ERROR(vg, "Unable to allocate a request of size %d\n",
+    ERROR(vg, "Unable to allocate a request of size %d b\n",
 	  vma->vm_end - vma->vm_start);
   } else {
     req->context = vg;
@@ -1571,7 +1574,7 @@ static void fifo_complete_notify(struct usb_ep *ep,
   ep_complete_common(ep, req);
 
   req_compl = (struct completion *) req->context;
-  if (req_cmopl != NULL) {
+  if (req_compl != NULL) {
     complete(req_compl);
   } else {
     MWARN("No nofinication handler. Free the request\n");
