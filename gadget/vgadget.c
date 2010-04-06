@@ -1450,49 +1450,66 @@ static int fifo_release (struct inode *, struct file *)
   filp->private_data = NULL;
 }
 
-/* Handles the VMA open for a mapped FIFO request */
-static void fifo_vma_open(struct vm_area_struct *vma)
-{
+/* USB request with atomic refcounter */
+struct usb_mapped_request {
   struct usb_request *req;
+  atomic_t refcnt;
+}
+
+/* Handles the VMA open for a mapped FIFO request */
+static int fifo_vma_open(struct vm_area_struct *vma)
+{
+  struct usb_mapped_request *mreq;
   
-  req = (usb_request *) vma->vm_private_data;
-  //TODO: add a counter
+  mreq = (usb_mapped_request *) vma->vm_private_data;
+  return atomic_inc_return(&mreq->refcnt);
 }
 
 /* Handles the VMA close for a mapped FIFO request */
-static void fifo_vma_close(struct vm_area_struct *vma)
+static int fifo_vma_close(struct vm_area_struct *vma)
 {
-  struct usb_request *req;
+  struct usb_mapped_request *mreq;
+  struct vg_dev *vg;
+  int rc;
   
-  req = (usb_request *) vma->vm_private_data;
-  //TODO: Submit the request if the counter is 0
-}
-
-/* Handles a page fault for a mapped FIFO request */
-static struct page *fifo_vma_nopage(struct vm_area_struct *vma,
-				    unsigned long address,
-				    int *type)
-{
-  unsigned long offset;
-  struct usb_request *req;
-  struct page *page = NOPAGE_SIGBUS;
-  void *pageptr = NULL; /* default to "missing" */
-
-  req = (usb_request *) vma->vm_private_data;
-
-  offset = (address - vma->vm_start) + (vma->vm_pgoff << PAGE_SHIFT);
-  //offset >>= PAGE_SHIFT; /* offset is a number of pages */
-  if ((offset + PAGE_SIZE) <= req->length) {
-    page = virt_to_page(req->buf);
-    /* got it, now increment the count */
-    get_page(page);
-    if (type) {
-      *type = VM_FAULT_MINOR;
+  mreq = (usb_mapped_request *) vma->vm_private_data;
+  vg = (vg_dev *) mreq->req->context;
+  
+  rc = atomic_dec_return(&mreq->refcnt);
+  if (rc == 0) {
+    if (enquque_request(vg->bulk_in, mreq->req, fifo_complete) != 0) {
+      ERROR(vg, "Unable to enqueue a mapped request\n");
     }
   }
 
-  return page;
+  return rc;
 }
+
+/* Handles a page fault for a mapped FIFO request */
+static int fifo_vma_fault(struct vm_area_struct *vma,
+				   struct vm_fault *vmf)
+{
+  int rc;
+  //vmf->page = NOPAGE_SIGBUS;
+  vmf->page = virt_to_page(req->buf + vmf->pgoff);
+  if (vmf->page != NULL) {
+    get_page(vmf->page);
+    vmf->flags |= VM_FAULT_MINOR;
+    rc = 0;
+  } else {
+    vmf->flags |= VM_FAULT_NOPAGE;
+    rc = -EFAULT;
+  }
+
+  return rc;
+}
+
+/* Declare the set of FIFO VMA operations */
+static struct vm_operations_struct fifo_vma_ops = {
+  .open = fifo_vma_open,
+  .close = fifo_vma_close,
+  .fault = fifo_vma_fault,
+};
 
 /* Maps a next FIFO buffer for userspace access */
 static int fifo_mmap (struct file *filp, struct vm_area_struct *vma)
@@ -1508,13 +1525,23 @@ static int fifo_mmap (struct file *filp, struct vm_area_struct *vma)
 			     &req)) != 0) {
     ERROR(vg, "Unable to allocate a request of size %d\n",
 	  vma->vm_end - vma->vm_start);
+  } else {
+    req->context = vg;
   }
-  
+
   if (rc == 0) {
-    vma->vm_ops = &fifo_vm_ops;
+    struct usb_mapped_request *mreq;
+    vma->vm_ops = &fifo_vma_ops;
     vma->vm_flags |= VM_RESERVED;
-    vma->vm_private_data = req;
-    fifo_vma_open(vma);
+    mreq = kmalloc(sizeof struct usb_mapped_request, GFP_KERNEL);
+    if (mreq != NULL) {
+      mreq->req = req;
+      atomic_set(&mreq->refcnt, 0);
+      vma->vm_private_data = mreq;
+      fifo_vma_open(vma);
+    } else {
+      rc = -ENOMEM;
+    }
   }
 
   return rc;
