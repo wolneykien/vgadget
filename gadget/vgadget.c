@@ -28,6 +28,7 @@
 #include <linux/usb/ch9.h>
 #include <linux/usb/gadget.h>
 #include <linux/dmapool.h>
+#include <linux/dma-mapping.h>
 #include <asm/dma-mapping.h>
 #include <asm/bitops.h>
 #include <asm/atomic.h>
@@ -406,6 +407,9 @@ MODULE_PARM_DESC(serial, "Gadget serial number");
 /* The gadget device object */
 static struct vg_dev *the_vg;
 
+/* Main process prototype */
+static int main_process(void *context);
+
 /* Starts the main process */
 static int __init vg_main_process_start(struct vg_dev *vg)
 {
@@ -440,6 +444,10 @@ static int __exit vg_main_process_terminate(struct vg_dev*vg)
 
   return rc;
 }
+
+/* Device object allocator/deallocator prototypes */
+static int __init vg_alloc(struct vg_dev **vg);
+static void vg_free(struct vg_dev *vg);
 
 /* Initializes and registeres the module  */
 static int __init vg_init(void)
@@ -587,7 +595,7 @@ static int allocate_request(struct usb_ep *ep,
   int rc;
   struct vg_dev *vg;
 
-  vg = (vg_dev *) ep->driver_data;
+  vg = (struct vg_dev *) ep->driver_data;
 
   MDBG("Allocate a request for endpoint %s\n",
        ep->name);
@@ -611,11 +619,11 @@ static int allocate_request(struct usb_ep *ep,
       (*req)->buf =
 	dma_pool_alloc(vg->dma_pool, GFP_KERNEL, &(*req)->dma);
     } else {
-      MWARN("Allocate a large coherent DMA buffer not from the pool\n");
+      MWARNING("Allocate a large coherent DMA buffer not from the pool\n");
       (*req)->buf =
-	dma_alloc_coherent(vg->gadget->dev, size, &(*req)->dma, GFP_KERNEL);
+	dma_alloc_coherent(&vg->gadget->dev, size, &(*req)->dma, GFP_KERNEL);
     }
-    if (*req->buf == NULL) {
+    if ((*req)->buf == NULL) {
       rc = -ENOMEM;
       MERROR("Unable to allocate a buffer for the request\n");
     } else {
@@ -634,14 +642,14 @@ static int free_request(struct usb_ep *ep,
   int rc;
   struct vg_dev *vg;
 
-  vg = (vg_dev *) ep->driver_data;
+  vg = (struct vg_dev *) ep->driver_data;
 
   if (req->buf != NULL) {
     MDBG("Free the buffer of a request for endpoint %s\n", ep->name);
-    if (size <= DMA_POOL_BUF_SIZE) {
+    if (req->length <= DMA_POOL_BUF_SIZE) {
       dma_pool_free(vg->dma_pool, req->buf, req->dma);
     } else {
-      dma_free_coherent(vg->gadget->dev, req->length, req->buf, req->dma);
+      dma_free_coherent(&vg->gadget->dev, req->length, req->buf, req->dma);
     }
 
     req->buf = NULL;
@@ -656,19 +664,20 @@ static int free_request(struct usb_ep *ep,
 }
 
 /* Sets the size of the request data */
-static void set_request_length(struct urb_request *req,
+static void set_request_length(struct usb_request *req,
 			       int len)
 {
-  if (size <= DMA_POOL_BUF_SIZE) {
+  if (req->length <= DMA_POOL_BUF_SIZE) {
     req->length = len;
   }
 }
 
 /* Enqueues a URB request */
+typedef void (*complete_proc_t)(struct usb_ep *ep,		\
+				struct usb_request *req);
 static int enqueue_request(struct usb_ep *ep,
-			   struct urb_request *req,
-			   (*complete)(struct usb_ep *ep,
-				       struct usb_request *req))
+			   struct usb_request *req,
+			   complete_proc_t complete)
 {
   int rc;
 
@@ -676,8 +685,8 @@ static int enqueue_request(struct usb_ep *ep,
 
   vg = ep->driver_data;
   DBG(vg, "Enqueue a request of size %d b for endpoint %s\n",
-      ep-name,
-      req->length);
+      req->length,
+      ep->name);
   req->complete = complete;
   if (req->context == NULL) {
     req->context = vg;
@@ -685,7 +694,7 @@ static int enqueue_request(struct usb_ep *ep,
   rc = usb_ep_queue(ep, req, GFP_ATOMIC);
   if (rc != 0 && rc != -ESHUTDOWN) {
     /* Can't do much more than wait for a reset */
-    WARN(vg, "Error in submission: %s --> %d\n",
+    WARNING(vg, "Error in submission: %s --> %d\n",
 	 ep->name, rc);
   }
 
@@ -698,7 +707,7 @@ static void ep_complete_common(struct usb_ep *ep, struct usb_request *req)
   struct vg_dev *vg = (struct vg_dev *) req->context;
 
   if (req->status || req->actual != req->length) {
-    WARN(vg, "Request completed with error: %d %u/%u\n",
+    WARNING(vg, "Request completed with error: %d %u/%u\n",
 	 req->status, req->actual, req->length);
   }
 
@@ -747,13 +756,17 @@ static int __init vg_bind(struct usb_gadget *gadget)
 	vg->ep0 = gadget->ep0;
 	vg->ep0->driver_data = vg;
 
+	rc = 0;
 	MDBG("Allocate the DMA pool\n");
-	vg->dma_pool =
-	  dma_pool_create(DMA_POOL_NAME,
-			  gadget->dev, 
-			  DMA_POOL_BUF_SIZE,
-			  PAGE_SIZE,
-			  PAGE_SIZE);
+	if ((vg->dma_pool =
+	     dma_pool_create(DMA_POOL_NAME,
+			     &gadget->dev, 
+			     DMA_POOL_BUF_SIZE,
+			     PAGE_SIZE,
+			     PAGE_SIZE)) == NULL) {
+	  MERROR("Unable to allocate the DMA pool\n");
+	  rc = -ENOMEM;
+	}
 
 	if (rc == 0) {
 	  /* Find all the endpoints we will use */
@@ -845,7 +858,7 @@ static int vg_request_reconf(struct vg_dev *vg, u8 new_confn)
     complete(&vg->main_event);
     rc = 0;
   } else {
-    WARN(vg, "An other reconfiguration is in progress\n");
+    WARNING(vg, "An other reconfiguration is in progress\n");
     rc = -ENOMEM;
   }
 
@@ -865,7 +878,7 @@ static int vg_request_intf_reconf(struct vg_dev *vg,
     complete(&vg->main_event);
     rc = 0;
   } else {
-    WARN(vg, "An other interface reconfiguration is in progress\n");
+    WARNING(vg, "An other interface reconfiguration is in progress\n");
     rc = -ENOMEM;
   }
 
@@ -901,7 +914,7 @@ static int class_setup_req(struct vg_dev *vg,
 	  /* Reinitialize the transport processes */
 	  DBG(vg, "Bulk reset request\n");
 	  //TODO: may not sleep, restart asynchronously
-	  value = DELAYED_STATUS;
+	  value = 0;
 	  break;
 	}
 
@@ -1022,7 +1035,7 @@ static int standard_setup_req(struct vg_dev *vg,
 			allocate_request(vg->ep0, EP0_BUFSIZE, res_req);
 			value = usb_gadget_get_string(&stringtab,
 						      wValue & 0xff,
-						      *(res_req)->buf);
+						      (*res_req)->buf);
 			if (value >= 0)
 				value = min(wLength, (u16) value);
 			set_request_length(*res_req, value);
@@ -1036,10 +1049,8 @@ static int standard_setup_req(struct vg_dev *vg,
 		if (ctrl->bRequestType != (USB_DIR_OUT | USB_TYPE_STANDARD |
 				USB_RECIP_DEVICE))
 			break;
-		if (wValue >= 0 && wValue <= NUMBER_OF_CONFIGS) {
-		  if ((value = vg_request_reconf(vg, wValue)) == 0) {
-		    value = DELAYED_STATUS;
-		  }
+		if (wValue <= NUMBER_OF_CONFIGS) {
+		  value = vg_request_reconf(vg, wValue);
 		}
 		break;
 	case USB_REQ_GET_CONFIGURATION:
@@ -1059,12 +1070,7 @@ static int standard_setup_req(struct vg_dev *vg,
 				USB_RECIP_INTERFACE))
 			break;
 		if (vg->config) {
-		  if ((value =
-		       vg_request_intf_reconf(vg,
-					      wIndex,
-					      wValue)) == 0) {
-		    value = DELAYED_STATUS;
-		  }
+		  value = vg_request_intf_reconf(vg, wIndex, wValue);
 		}
 		break;
 	case USB_REQ_GET_INTERFACE:
@@ -1106,10 +1112,7 @@ static int vg_setup(struct usb_gadget *gadget,
 	int rc;
 
 	++vg->req_tag;		// Record arrival of a new request
-	DBG(vg, "Setup request number %d\n", vg->req_tag);
-	vg->ep0_req->context = NULL;
-	vg->ep0_req->length = 0;
-	dump_msg(vg, "ep0-setup", (u8 *) ctrl, sizeof(*ctrl));
+	DBG(vg, "Proceess the setup request number %d\n", vg->req_tag);
 
 	if ((ctrl->bRequestType & USB_TYPE_MASK) == USB_TYPE_CLASS) {
 	  DBG(vg, "Class setup request\n");
@@ -1381,8 +1384,13 @@ static ssize_t status_write (struct file *filp,
   struct vg_dev *vg;
 
   vg = (struct vg_dev *) filp->private_data;
-  DBG(vg, "Write status data to the host\n");
-  len = 0; //TODO: implement write
+  if (vg != NULL) {
+    DBG(vg, "Write status data to the host\n");
+    len = 0; //TODO: implement write
+  } else {
+    MERROR("File private data is NULL\n");
+    len = -EFAULT;
+  }
 
   return len;
 }
@@ -1393,20 +1401,31 @@ static int cons_open (struct inode *inode, struct file *filp)
   struct vg_dev *vg;
   int rc;
 
-  vg = container_of(inode->i_cdev, struct vg_dev, cdev);
+  rc = 0;
+  vg = container_of(inode->i_cdev, struct vg_dev, cons_dev);
   DBG(vg, "Open the console device\n");
 
   filp->private_data = vg;
+
+  return rc;
 }
 
 /* Closes the console device */
 static int cons_release (struct inode *inode, struct file *filp)
 {
+  int rc;
   struct vg_dev *vg;
 
+  rc = 0;
   vg = (struct vg_dev *) filp->private_data;
-  DBG(vg, "Release the console device\n");
   filp->private_data = NULL;
+  if (vg != NULL) {
+    DBG(vg, "Release the console device\n");
+  } else {
+    MERROR("File private data is NULL\n");
+  }
+
+  return rc;
 }
 
 /* Writes data to the FIFO */
@@ -1419,52 +1438,70 @@ static ssize_t fifo_write (struct file *filp,
   struct vg_dev *vg;
 
   vg = (struct vg_dev *) filp->private_data;
-  DBG(vg, "Write data to the FIFO\n");
-  len = 0; //TODO: implement write
+  if (vg != NULL) {
+    DBG(vg, "Write data to the FIFO\n");
+    len = 0; //TODO: implement write
+  } else {
+    MERROR("File private data is NULL\n");
+    len = -EFAULT;
+  }
 
   return len;
 }
 
 /* Opens the FIFO device */
-static int fifo_open (struct inode *, struct file *)
+static int fifo_open (struct inode *inode, struct file *filp)
 {
   struct vg_dev *vg;
   int rc;
 
+  rc = 0;
   vg = container_of(inode->i_cdev, struct vg_dev, fifo_dev);
   DBG(vg, "Open the FIFO device\n");
 
   filp->private_data = vg;
+
+  return rc;
 }
 
 /* Closes the FIFO device */
-static int fifo_release (struct inode *, struct file *)
+static int fifo_release (struct inode *inode, struct file *filp)
 {
+  int rc;
   struct vg_dev *vg;
 
+  rc = 0;
   vg = (struct vg_dev *) filp->private_data;
-  DBG(vg, "Release the FIFO device\n");
   filp->private_data = NULL;
+  if (vg != NULL) {
+    DBG(vg, "Release the FIFO device\n");
+  } else {
+    MERROR("File private data is NULL\n");
+  }
+
+  return rc;
 }
 
 /* USB request with atomic refcounter */
 struct usb_mapped_request {
   struct usb_request *req;
   atomic_t refcnt;
-}
+};
 
 /* Handles the VMA open for a mapped FIFO request */
-static int fifo_vma_open(struct vm_area_struct *vma)
+static void fifo_vma_open(struct vm_area_struct *vma)
 {
   int rc;
   struct usb_mapped_request *mreq;
   
-  mreq = (usb_mapped_request *) vma->vm_private_data;
-  
-  rc = atomic_inc_return(&mreq->refcnt);
-  MDBG("Add a new reference to the request (%d)\n", rc);
+  mreq = (struct usb_mapped_request *) vma->vm_private_data;
 
-  return rc;
+  if (mreq != NULL) {
+    rc = atomic_inc_return(&mreq->refcnt);
+    MDBG("Add a new reference to the request (%d)\n", rc);
+  } else {
+    MERROR("VMA private data is NULL\n");
+  }
 }
 
 /* Handles a finished FIFO request */
@@ -1475,46 +1512,58 @@ static void fifo_complete(struct usb_ep *ep, struct usb_request *req)
 }
 
 /* Handles the VMA close for a mapped FIFO request */
-static int fifo_vma_close(struct vm_area_struct *vma)
+static void fifo_vma_close(struct vm_area_struct *vma)
 {
   struct usb_mapped_request *mreq;
   struct vg_dev *vg;
   struct usb_request *req;
   int rc;
   
-  mreq = (usb_mapped_request *) vma->vm_private_data;
-  vg = (vg_dev *) mreq->req->context;
-  
-  rc = atomic_dec_return(&mreq->refcnt);
-  MDBG("Remove a reference to the request (%d)\n", rc);
-  if (rc == 0) {
-    req = mreq->req;
-    kfree(mreq);
-    DBG(vg, "Enqueue a mapped request\n");
-    if (enquque_request(vg->bulk_in, req, fifo_complete) != 0) {
-      ERROR(vg, "Unable to enqueue a mapped request\n");
+  mreq = (struct usb_mapped_request *) vma->vm_private_data;
+  if (mreq != NULL) {
+    vg = (struct vg_dev *) mreq->req->context;
+    if (vg != NULL) {
+      rc = atomic_dec_return(&mreq->refcnt);
+      MDBG("Remove a reference to the request (%d)\n", rc);
+      if (rc == 0) {
+	req = mreq->req;
+	kfree(mreq);
+	DBG(vg, "Enqueue a mapped request\n");
+	if (enqueue_request(vg->bulk_in, req, fifo_complete) != 0) {
+	  ERROR(vg, "Unable to enqueue a mapped request\n");
+	}
+      }
+    } else {
+      MERROR("Request context is NULL\n");
     }
+  } else {
+    MERROR("VMA private data is NULL\n");
   }
-
-  return rc;
 }
 
 /* Handles a page fault for a mapped FIFO request */
 static int fifo_vma_fault(struct vm_area_struct *vma,
 			  struct vm_fault *vmf)
 {
+  struct usb_mapped_request *mreq;
   int rc;
 
-  MDBG("Handle page fault request at 0x%lx\n", vmf->pgoff);
-  //vmf->page = NOPAGE_SIGBUS;
-  vmf->page = virt_to_page(req->buf + vmf->pgoff);
-  if (vmf->page != NULL) {
-    get_page(vmf->page);
-    vmf->flags |= VM_FAULT_MINOR;
-    rc = 0;
+  mreq = (struct usb_mapped_request *) vma->vm_private_data;
+  if (mreq != NULL) {
+    MDBG("Handle page fault request at 0x%lx\n", vmf->pgoff);
+    //vmf->page = NOPAGE_SIGBUS;
+    vmf->page = virt_to_page(mreq->req->buf + vmf->pgoff);
+    if (vmf->page != NULL) {
+      get_page(vmf->page);
+      vmf->flags |= VM_FAULT_MINOR;
+      rc = 0;
+    } else {
+      MERROR("Unable to map the missing page\n");
+      vmf->flags |= VM_FAULT_NOPAGE;
+      rc = -EFAULT;
+    }
   } else {
-    MERROR("Unable to map the missing page\n");
-    vmf->flags |= VM_FAULT_NOPAGE;
+    MERROR("VMA private data is NULL\n");
     rc = -EFAULT;
   }
 
@@ -1536,22 +1585,27 @@ static int fifo_mmap (struct file *filp, struct vm_area_struct *vma)
   int rc;
 
   vg = (struct vg_dev *) filp->private_data;
-  DBG(vg, "Map a FIFO buffer of %d bytes\n",
-      vma->vm_end - vma->vm_start);
-  if ((rc = allocate_request(vg->bulk_in,
-			     vma->vm_end - vma->vm_start,
-			     &req)) != 0) {
-    ERROR(vg, "Unable to allocate a request of size %d b\n",
-	  vma->vm_end - vma->vm_start);
+  if (vg != NULL) {
+    DBG(vg, "Map a FIFO buffer of %lud bytes\n",
+	vma->vm_end - vma->vm_start);
+    if ((rc = allocate_request(vg->bulk_in,
+			       vma->vm_end - vma->vm_start,
+			       &req)) != 0) {
+      ERROR(vg, "Unable to allocate a request of size %lud b\n",
+	    vma->vm_end - vma->vm_start);
+    } else {
+      req->context = vg;
+    }
   } else {
-    req->context = vg;
+    MERROR("File private data is NULL\n");
+    rc = -EFAULT;
   }
 
   if (rc == 0) {
     struct usb_mapped_request *mreq;
     vma->vm_ops = &fifo_vma_ops;
     vma->vm_flags |= VM_RESERVED;
-    mreq = kmalloc(sizeof struct usb_mapped_request, GFP_KERNEL);
+    mreq = kmalloc(sizeof *mreq, GFP_KERNEL);
     if (mreq != NULL) {
       mreq->req = req;
       atomic_set(&mreq->refcnt, 0);
@@ -1577,7 +1631,7 @@ static void fifo_complete_notify(struct usb_ep *ep,
   if (req_compl != NULL) {
     complete(req_compl);
   } else {
-    MWARN("No nofinication handler. Free the request\n");
+    MWARNING("No nofinication handler. Free the request\n");
     free_request(ep, req);
   }
 }
@@ -1592,36 +1646,49 @@ static ssize_t fifo_sendpage (struct file *filp,
 {
   ssize_t len;
   struct vg_dev *vg;
-  struct usb_request req;
+  struct usb_request *req;
 
   vg = (struct vg_dev *) filp->private_data;
-  DBG(vg, "Send a page over the USB channel\n");
+  if (vg != NULL) {
+    DBG(vg, "Send a page over the USB channel\n");
+    DBG(vg, "Allocate a request for page delivery\n");
+    if ((req = usb_ep_alloc_request(vg->bulk_in, GFP_KERNEL)) != NULL) {
+      req->buf = page_address(page);
+      req->complete = fifo_complete_notify;
+      req->length = length;
+      req->zero = 0;
+      len = 0;
+    } else {
+      ERROR(vg, "Unable to allocate a request for page delivery\n");
+      len = -ENOMEM;
+    }
+  } else {
+    MERROR("File private data is NULL\n");
+    len = -EFAULT;
+  }
 
-  DBG(vg, "Allocate a request for page delivery\n");
-  if ((req = usb_ep_alloc_request(vg->bulk_in, GFP_KERNEL)) != NULL) {
-    req->buf = page->virtual;
-    req->complete = fifo_complete_notify;
-    req->length = length;
-    req->zero = 0;
-    if ((req->dma = dma_map_page(vg->gadget->dev,
+  if (len == 0) {
+    if ((req->dma = dma_map_page(&vg->gadget->dev,
 				 page,
 				 offset,
 				 length,
 				 DMA_TO_DEVICE)) != 0) {
       struct completion *req_compl;
       if ((req_compl =
-	   kmalloc(sizeof struct completion, GFP_KRNEL) != NULL)) {
+	   kmalloc(sizeof *req_compl, GFP_KERNEL)) != NULL) {
 	init_completion(req_compl);
 	req->context = req_compl;
-	if (enqueue_request(req) == 0) {
+	if (enqueue_request(vg->bulk_in,
+			    req,
+			    fifo_complete_notify) == 0) {
 	  DBG(vg, "Wait for the request to complete\n");
-	  wait_for_completion(&req_compl);
+	  wait_for_completion(req_compl);
 	  DBG(vg, "Return the actual amount sent (%d/%d)\n",
-	      legnth,
+	      length,
 	      req->actual);
 	  len = req->actual;
 	  DBG(vg, "Free a request for page delivery\n");
-	  dma_unmap_page(vg->gadget->dev, req->dma, length,
+	  dma_unmap_page(&vg->gadget->dev, req->dma, length,
 			 DMA_TO_DEVICE);
 	  usb_ep_free_request(vg->bulk_in, req);
 	  kfree(req_compl);
@@ -1637,10 +1704,6 @@ static ssize_t fifo_sendpage (struct file *filp,
       ERROR(vg, "Unable to map a page for DMA\n");
       len = -EFAULT;
     }
-  } else {
-    ERROR(vg, "Unable to allocate a request for endpoint %s\n",
-	  ep->name);
-    len = -ENOMEM;
   }
 
   return len;
