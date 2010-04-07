@@ -449,6 +449,42 @@ static int __exit vg_main_process_terminate(struct vg_dev*vg)
 static int __init vg_alloc(struct vg_dev **vg);
 static void vg_free(struct vg_dev *vg);
 
+/* Sets up the console character device */
+static int cons_chardev_setup(struct vg_dev *vg)
+{
+  int rc;
+
+  MDBG("Register the console device\n");
+  cdevno = MKDEV(CONS_MAJOR, 0);
+  cdev_init(&vg->cons_dev, &cons_fops);
+  vg->cons_dev.owner = THIS_MODULE;
+  vg->cons_dev.ops = &cons_fops;
+  vg->cons_dev.kobj.name = CONS_FNAME;
+  if ((rc = cdev_add(&vg->cons_dev, cdevno, 1)) != 0) {
+    MERROR("Unable to register the console device\n");
+  }
+
+  return rc;
+}
+
+/* Sets up the FIFO character device */
+static int fifo_chardev_setup(struct vg_dev *vg)
+{
+  int rc;
+
+  MDBG("Register the FIFO device\n");
+  fdevno = MKDEV(FIFO_MAJOR, 0);
+  cdev_init(&vg->fifo_dev, &fifo_fops);
+  vg->fifo_dev.owner = THIS_MODULE;
+  vg->fifo_dev.ops = &fifo_fops;
+  vg->fifo_dev.kobj.name = FIFO_FNAME;
+  if ((rc = cdev_add(&vg->fifo_dev, fdevno, 1)) != 0) {
+    MERROR("Unable to register the FIFO device\n");
+  }
+
+  return rc;
+}
+
 /* Initializes and registeres the module  */
 static int __init vg_init(void)
 {
@@ -482,49 +518,38 @@ static int __init vg_init(void)
 	  rc = vg_main_process_start(the_vg);
 	}
 
-	if (rc == 0) {
-	  MDBG("Register the console device\n");
-	  cdevno = MKDEV(CONS_MAJOR, 0);
-	  cdev_init(&the_vg->cons_dev, &cons_fops);
-	  the_vg->cons_dev.owner = THIS_MODULE;
-	  the_vg->cons_dev.ops = &cons_fops;
-	  the_vg->cons_dev.kobj.name = CONS_FNAME;
-	  if ((rc = cdev_add(&the_vg->cons_dev, cdevno, 1)) != 0) {
-	    MERROR("Unable to register the console device\n");
-	  }
-	}
-
-	if (rc == 0) {
-	  MDBG("Register the FIFO device\n");
-	  fdevno = MKDEV(FIFO_MAJOR, 0);
-	  cdev_init(&the_vg->fifo_dev, &fifo_fops);
-	  the_vg->fifo_dev.owner = THIS_MODULE;
-	  the_vg->fifo_dev.ops = &fifo_fops;
-	  the_vg->fifo_dev.kobj.name = FIFO_FNAME;
-	  if ((rc = cdev_add(&the_vg->fifo_dev, fdevno, 1)) != 0) {
-	    MERROR("Unable to register the FIFO device\n");
-	  }
-	}
-
 	return rc;
 }
 /* Set up the module initialization handler */
 module_init(vg_init);
 
+/* Unregisters the console character device */
+static void cons_chardev_remove(struct vg_dev *vg)
+{
+  MDBG("Unregister the console device\n");
+  cdev_del(&vg->cons_dev);
+}
+
+/* Unregisters the FIFO character device */
+static void fifo_chardev_remove(struct vg_dev *vg)
+{
+  MDBG("Unregister the FIFO device\n");
+  cdev_del(&vg->fifo_dev);
+}
+
+/* Request device reconfiguration (prototype) */
+static int vg_request_reconf(struct vg_dev *vg, u8 new_confn);
 
 /* Unregisteres the module, frees up the allocated resources */
 static void __exit vg_cleanup(void)
 {
 	struct vg_dev	*vg = the_vg;
 
+	/* Turn down the interfaces */
+	vg_request_reconf(vg, 0);
+
 	/* Terminate the main process */
 	vg_main_process_terminate(the_vg);
-
-	MDBG("Unregister the console device\n");
-	cdev_del(&vg->cons_dev);
-
-	MDBG("Unregister the FIFO device\n");
-	cdev_del(&vg->fifo_dev);
 
 	/* Unregister the driver iff the thread hasn't already done so */
 	if (test_and_clear_bit(REGISTERED, &vg->flags)) {
@@ -1140,7 +1165,8 @@ static void vg_disconnect(struct usb_gadget *gadget)
 	struct vg_dev *vg = get_gadget_data(gadget);
 
 	DBG(vg, "Disconnect or port reset\n");
-	//TODO: stop all transfer processes, may not sleep
+	/* Turn down the interfaces */
+	vg_request_reconf(vg, 0);
 }
 
 /* Enables the given endpoint */
@@ -1175,6 +1201,9 @@ static int do_set_cmd_interface(struct vg_dev *vg, int altsetting)
   DBG(vg, "Disable command-status endpoints\n");
   usb_ep_disable(vg->bulk_out);
   usb_ep_disable(vg->bulk_status_in);
+
+  /* Unregister the command-status character device */
+  cons_chardev_remove(vg);
 
   if (altsetting < 0) {
     return rc;
@@ -1212,6 +1241,11 @@ static int do_set_cmd_interface(struct vg_dev *vg, int altsetting)
   }
 #endif
 
+  if (rc == 0) {
+    /* Register the command-status character device */
+    cons_chardev_setup(vg);
+  }
+
   return rc;
 }
 
@@ -1225,6 +1259,9 @@ static int do_set_fifo_interface(struct vg_dev *vg, int altsetting)
   /* Disable the endpoints */
   DBG(vg, "Disable FIFO endpoints\n");
   usb_ep_disable(vg->bulk_in);
+
+  /* Unregister the FIFO character device */
+  fifo_chardev_remove(vg);
 
   if (altsetting < 0) {
     return rc;
@@ -1251,6 +1288,11 @@ static int do_set_fifo_interface(struct vg_dev *vg, int altsetting)
 #ifdef CONFIG_USB_GADGET_DUALSPEED
   }
 #endif
+
+  if (rc == 0) {
+    /* Register the FIFO character device */
+    fifo_chardev_setup(vg);
+  }
 
   return rc;
 }
@@ -1285,11 +1327,9 @@ static int do_set_config(struct vg_dev *vg, int new_config)
 
   /* Disable the single interface */
   DBG(vg, "Disable the interfaces\n");
-  if (vg->config != 0) {
-    vg->config = 0;
-    rc |= do_set_interface(vg, 0, -1);
-    rc |= do_set_interface(vg, 1, -1);
-  }
+  vg->config = 0;
+  rc |= do_set_interface(vg, 0, -1);
+  rc |= do_set_interface(vg, 1, -1);
 
   if (new_config > 0) {
     char *speed;
