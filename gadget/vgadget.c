@@ -453,6 +453,7 @@ static void vg_free(struct vg_dev *vg);
 static int cons_chardev_setup(struct vg_dev *vg)
 {
   int rc;
+  int cdevno;
 
   MDBG("Register the console device\n");
   cdevno = MKDEV(CONS_MAJOR, 0);
@@ -471,6 +472,7 @@ static int cons_chardev_setup(struct vg_dev *vg)
 static int fifo_chardev_setup(struct vg_dev *vg)
 {
   int rc;
+  int fdevno;
 
   MDBG("Register the FIFO device\n");
   fdevno = MKDEV(FIFO_MAJOR, 0);
@@ -489,7 +491,6 @@ static int fifo_chardev_setup(struct vg_dev *vg)
 static int __init vg_init(void)
 {
 	int rc;
-	int cdevno, fdevno;
 
 	MDBG("Process the module parameters\n");
 	snprintf(manufacturer, sizeof manufacturer, "%s",
