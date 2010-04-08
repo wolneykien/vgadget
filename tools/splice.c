@@ -36,7 +36,7 @@ int main(int argc, char **argv)
     printf("[server] Can not open %s for reading\n", argv[1]);
   }
 
-  if ((out_fd = open(argv[2], O_WRONLY | O_CREAT)) <= 0) {
+  if ((out_fd = open(argv[2], O_WRONLY | O_CREAT | O_TRUNC)) <= 0) {
     printf("[server] Can not open %s for writing\n", argv[2]);
   }
 

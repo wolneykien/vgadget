@@ -73,7 +73,7 @@ int main(int argc, char **argv)
 	  exit(EXIT_FAILURE);
 	}
       
-      if ((out_fd = open(argv[2], O_WRONLY | O_CREAT)) <= 0) {
+      if ((out_fd = open(argv[2], O_WRONLY | O_CREAT | O_TRUNC)) <= 0) {
 	printf("[server] Can not open %s\n", argv[2]);
       }
 
