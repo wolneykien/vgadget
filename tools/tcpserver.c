@@ -67,7 +67,7 @@ int main(int argc, char **argv)
 	}
       
       if ((out_fd = open(argv[2], O_WRONLY)) <= 0) {
-	printf("can not open %s\n", argv[2]);
+	printf("Can not open %s\n", argv[2]);
       }
 
       if (out_fd > 0) {
