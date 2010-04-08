@@ -1,4 +1,6 @@
 /* Server code in C */
+
+#define _GNU_SOURCE
  
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -10,21 +12,26 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <sys/sendfile.h>
- 
+
+#define TRANSFER_LENGTH 4096
+
 int main(int argc, char **argv)
 {
   struct sockaddr_in stSockAddr;
   int SocketFD = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
   int out_fd;
   ssize_t sent;
+  unsigned long total_sent;
+  int pipe_fds[2];
 
-  if (argc != 4) {
-    printf("Usage: %s <port> <file> <count> \n", argv[0]);
+  pipe_fds[0] = 0;
+  pipe_fds[1] = 0;
+
+  if (argc != 3) {
+    printf("Usage: %s <port> <file> \n", argv[0]);
     printf("\n");
     printf("\t<port> -- TCP port number to listen on\n");
     printf("\t<file> -- output file to send data to\n");
-    printf("\t<count> -- amount of bytes to receive/send\n");
     printf("\n");
     exit(255);
   }
@@ -71,13 +78,45 @@ int main(int argc, char **argv)
       }
 
       if (out_fd > 0) {
-	if ((sent = sendfile(out_fd, ConnectFD, 0, atoi(argv[3]))) < 0) {
-	  perror("[server] Error: unable to sendfile");
+	if (pipe(pipe_fds) < 0) {
+	  perror("[server] Can not create a pipe\n");
 	}
       }
 
-      if (sent >= 0) {
-	printf("[server] Sent %d bytes successfully\n", sent);
+      total_sent = 0;
+      do {
+	if (pipe_fds[1] > 0) {
+	  if ((sent = splice(ConnectFD,
+			     NULL,
+			     pipe_fds[1],
+			     NULL,
+			     TRANSFER_LENGTH,
+			     SPLICE_F_MOVE)) < 0) {
+	    perror("[server] Error: unable to splice data from the socket");
+	  }
+	}
+
+	if (sent > 0 && pipe_fds[0] > 0) {
+	  if ((sent = splice(pipe_fds[0],
+			     NULL,
+			     out_fd,
+			     NULL,
+			     sent,
+			     SPLICE_F_MOVE)) < 0) {
+	    perror("[server] Error: unable to splice data to the file");
+	  }
+	}
+	if (sent > 0) {
+	  //	  printf("[server] Transfer %d bytes successfully\n", sent);
+	  total_sent += sent;
+	}
+      } while (sent > 0);
+
+      if (pipe_fds[1] != 0) {
+	close(pipe_fds[1]);
+      }
+      if (pipe_fds[0] != 0) {
+	close(pipe_fds[0]);
       }
 
       if (out_fd > 0) {
