@@ -14,13 +14,13 @@
 #include <linux/kernel.h>
 #include <linux/errno.h>
 #include <linux/init.h>
-#include <linux/slab.h>
 #include <linux/module.h>
-#include <linux/kref.h>
-#include <asm/uaccess.h>
 #include <linux/usb.h>
 #include <linux/poll.h>
+#include <linux/fs.h>
 #include <asm/atomic.h>
+#include <linux/kthread.h>
+#include <asm/bitops.h>
 #include <linux/wait.h>
 
 /* Various macros */
@@ -117,7 +117,7 @@ struct usb_vdev {
 struct urb_entry {
   struct urb *urb;
   struct urb_entry *next;
-}
+};
 
 /* Structure to hold working data of the FIFO device */
 struct usb_vfdev {
@@ -301,7 +301,7 @@ static ssize_t status_read(struct file *file, char *buffer, size_t count, loff_t
 static void free_urb(struct urb *urb)
 {
   /* Free up the allocated buffer(s) */
-  if (urb->transfer_buffer != NULL || urb->transfer_dma != NULL) {
+  if (urb->transfer_buffer != NULL) {
     usb_buffer_free(urb->dev, urb->transfer_buffer_length, 
 		    urb->transfer_buffer, urb->transfer_dma);
   }
@@ -398,16 +398,16 @@ static ssize_t cmd_write(struct file *file, const char *user_buffer, size_t coun
 static int vfdev_urb_offer(struct usb_vfdev *dev, struct urb *urb)
 {
   struct urb_entry *queue;
-  struct urb_entry *urb_entry;
+  struct urb_entry *entry;
   int rc;
 
   if (down_interruptible(&dev->mutex) == 0) {
     /* Make a new queue entry */
-    entry = kmalloc(sizeof struct urb_entry, GFP_KERNEL);
+    entry = kmalloc(sizeof *entry, GFP_KERNEL);
     if (entry != NULL) {
       /* Offer the new entry to the queue */
-      etnry->urb = urb;
-      etnry->next = NULL;
+      entry->urb = urb;
+      entry->next = NULL;
       rc = 0;
       /* Send notifications */
       up(&dev->queue_sem);
@@ -441,6 +441,7 @@ static void vfdev_bulk_read_callback(struct urb *urb)
 {
   struct usb_vfdev *dev;
 
+  dev = (struct usb_vfdev *)urb->context;
   if (urb->status && 
       !(urb->status == -ENOENT || 
 	urb->status == -ECONNRESET ||
@@ -448,7 +449,7 @@ static void vfdev_bulk_read_callback(struct urb *urb)
     dbg("%s - nonzero write bulk status received: %d",
 	__FUNCTION__, urb->status);
   } else {
-    if (vfdev_urb_offer((struct usb_vdev *)urb->context, urb) != 0) {
+    if (vfdev_urb_offer(dev, urb) != 0) {
       err("Unable to offer the urb. Free in up");
       free_urb(urb);
     }
@@ -485,7 +486,7 @@ static int fifo_read_enqueue(struct usb_vfdev *dev)
       /* initialize the urb properly */
       usb_fill_bulk_urb(urb, dev->udev,
 			usb_rcvbulkpipe(dev->udev, dev->bulk_in_epaddr),
-			buf, READ_BUF_SIZE, vdev_bulk_read_callback,
+			buf, READ_BUF_SIZE, vfdev_bulk_read_callback,
 			dev);
       urb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
       /* send the read request */
@@ -494,7 +495,7 @@ static int fifo_read_enqueue(struct usb_vfdev *dev)
       } else {
 	err("%s - failed submitting read urb, error %d",
 	    __FUNCTION__,
-	    retval);
+	    rc);
       }
     }
 
@@ -517,7 +518,7 @@ static int vfdev_urb_try_take(struct usb_vfdev *dev,
 {
   struct urb_entry *next;
 
-  if (down_trylock(&dev->queue) == 0) {
+  if (down_trylock(&dev->queue_sem) == 0) {
     if (down_interruptible(&dev->mutex) == 0) {
       if (dev->queue != NULL) {
 	*urb = dev->queue->urb;
@@ -574,7 +575,7 @@ static ssize_t fifo_read(struct file *file, char *buffer, size_t count, loff_t *
     // TODO: copy via DMA
     if ((rc = copy_to_user(buffer,
 			   urb->transfer_buffer,
-			   urb->actual_length)) == NULL) {
+			   urb->actual_length)) >= 0) {
       rc = urb->actual_length;
     }
     free_urb(urb);
@@ -585,13 +586,15 @@ static ssize_t fifo_read(struct file *file, char *buffer, size_t count, loff_t *
 
 /* Returns a bit mask indicating the current non-blocking
  * operations that are available for the CS device */
-static int vdev_poll(struct file *filp, poll_table *wait)
+static unsigned int vdev_poll(struct file *filp,
+			      struct poll_table_struct *wait) 
 {
-  struct usb_vfdev *dev;
+  struct usb_vdev *dev;
   int rc;
 
   dev = (struct usb_vdev *)filp->private_data; 
 
+  rc = 0;
   if (atomic_read(&dev->cmds_sent) < maxwrites) {
     /* Indicate that the write limit isn't exceeded */
     rc |= (POLLOUT | POLLWRNORM);
@@ -605,7 +608,8 @@ static int vdev_poll(struct file *filp, poll_table *wait)
 
 /* Returns a bit mask indicating the current non-blocking
  * operations that are available for the FIFO device */
-static int vfdev_poll(struct file *filp, poll_table *wait)
+static unsigned int vfdev_poll(struct file *filp,
+			       struct poll_table_struct *wait)
 {
   struct usb_vfdev *dev;
   int rc;
@@ -760,7 +764,6 @@ static int vdev_probe(struct usb_interface *interface, const struct usb_device_i
 static int vfdev_read_ahead_loop(void *context)
 {
   static struct usb_vfdev *dev;
-  sigset_t signal_mask;
   int rc;
 
   dev = (struct usb_vfdev *)context;
@@ -823,7 +826,7 @@ static int vfdev_read_ahead_stop(struct usb_vfdev *dev)
 {
   int rc;
 
-  rc = 0
+  rc = 0;
   if (test_and_clear_bit(RUNNING, &dev->read_ahead_flags)) {
     vfdev_read_ahead_cleanup(dev);
   }
@@ -855,6 +858,7 @@ static int vfdev_probe(struct usb_interface *interface, const struct usb_device_
 	sema_init(&dev->limit_sem, maxreads);
 	sema_init(&dev->queue_sem, 0);
 	sema_init(&dev->mutex, 1);
+	sema_init(&dev->read_ahead_running, 1);
 	init_waitqueue_head(&dev->fifo_wait);
 	dev->queue = NULL;
 
@@ -948,7 +952,10 @@ static void vdev_disconnect(struct usb_interface *interface)
 /* Handles a USB FIFO device disconnect event */
 static void vfdev_disconnect(struct usb_interface *interface)
 {
-  vfdev_read_ahead_stop((struct usb_fdev *)usb_get_intfdata(interface));
+  struct usb_vfdev *dev;
+
+  dev = (struct usb_vfdev *)usb_get_intfdata(interface);
+  vfdev_read_ahead_stop(dev);
   disconnect_common(interface, &vfdev_class, vfdev_delete);
 }
 
