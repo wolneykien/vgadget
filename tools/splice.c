@@ -71,10 +71,13 @@ int main(int argc, char **argv)
       }
     }
     if (sent > 0) {
-      //	  printf("[server] Transfer %d bytes successfully\n", sent);
       total_sent += sent;
     }
   } while (sent > 0 && total_sent < total);
+
+  if (total_sent > 0) {
+    printf("[server] Transfer %ld bytes successfully\n", total_sent);
+  }
 
   if (pipe_fds[1] != 0) {
     close(pipe_fds[1]);
