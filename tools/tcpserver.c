@@ -1,6 +1,8 @@
 /* Server code in C */
  
 #include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -64,7 +66,7 @@ int main(int argc, char **argv)
 	  exit(EXIT_FAILURE);
 	}
       
-      if ((out_fd = open(argv[2], O_WR)) <= 0) {
+      if ((out_fd = open(argv[2], O_WRONLY)) <= 0) {
 	printf("can not open %s\n", argv[2]);
       }
 
