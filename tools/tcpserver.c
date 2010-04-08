@@ -31,7 +31,7 @@ int main(int argc, char **argv)
  
   if(-1 == SocketFD)
     {
-      perror("can not create socket");
+      perror("[server] Can not create socket");
       exit(EXIT_FAILURE);
     }
  
@@ -43,14 +43,14 @@ int main(int argc, char **argv)
  
   if(-1 == bind(SocketFD,(const struct sockaddr *)&stSockAddr, sizeof(struct sockaddr_in)))
     {
-      perror("Error: bind failed");
+      perror("[server] Error: bind failed");
       close(SocketFD);
       exit(EXIT_FAILURE);
     }
  
   if(-1 == listen(SocketFD, 10))
     {
-      perror("Error: listen failed");
+      perror("[server] Error: listen failed");
       close(SocketFD);
       exit(EXIT_FAILURE);
     }
@@ -61,23 +61,23 @@ int main(int argc, char **argv)
       
       if(0 > ConnectFD)
 	{
-	  perror("Error: accept failed");
+	  perror("[server] Error: accept failed");
 	  close(SocketFD);
 	  exit(EXIT_FAILURE);
 	}
       
       if ((out_fd = open(argv[2], O_WRONLY)) <= 0) {
-	printf("Can not open %s\n", argv[2]);
+	printf("[server] Can not open %s\n", argv[2]);
       }
 
       if (out_fd > 0) {
 	if ((sent = sendfile(out_fd, ConnectFD, 0, atoi(argv[3]))) < 0) {
-	  perror("Error: unable to sendfile");
+	  perror("[server] Error: unable to sendfile");
 	}
       }
 
       if (sent >= 0) {
-	printf("Sent %d bytes successfully\n", sent);
+	printf("[server] Sent %d bytes successfully\n", sent);
       }
 
       if (out_fd > 0) {
