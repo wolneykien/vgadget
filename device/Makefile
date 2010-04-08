@@ -1,4 +1,4 @@
-LINUX_DIR=/lib/modules/$(shell uname -r)/build
+LINUX_DIR=/usr/src/linux-$(shell uname -r)
 
 obj-m += vdevice.o
 
