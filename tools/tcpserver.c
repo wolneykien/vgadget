@@ -13,6 +13,8 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "syscalls.h"
+
 #define TRANSFER_LENGTH 4096
 
 int main(int argc, char **argv)
