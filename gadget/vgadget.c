@@ -1674,8 +1674,7 @@ static void fifo_complete_notify(struct usb_ep *ep,
   if (req_compl != NULL) {
     complete(req_compl);
   } else {
-    MWARNING("No nofinication handler. Free the request\n");
-    free_request(ep, req);
+    MERROR("No nofinication handler\n");
   }
 }
 
