@@ -785,7 +785,7 @@ static int __init vg_bind(struct usb_gadget *gadget)
 
 	rc = 0;
 	MDBG("Allocate the DMA pool\n");
-	vg->dev.coherent_dma_mask = 0xffffffff;
+	vg->gadget->dev.coherent_dma_mask = 0xffffffff;
 	if ((vg->dma_pool =
 	     dma_pool_create(DMA_POOL_NAME,
 			     &gadget->dev, 
