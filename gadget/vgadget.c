@@ -578,6 +578,7 @@ static int __init vg_alloc(struct vg_dev **vg)
 	*vg = kmalloc(sizeof *vg, GFP_KERNEL);
 	if (vg) {
 	  memset(*vg, 0, sizeof *vg);
+	  (*vg)->req_tag = 0;
 	  rc = 0;
 	} else {
 	  rc = -ENOMEM;
