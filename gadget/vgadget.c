@@ -695,6 +695,7 @@ static int free_request(struct usb_ep *ep,
 
   if (req->buf != NULL) {
     MDBG("Free the buffer of a request for endpoint %s\n", ep->name);
+    //TODO: explicitly state the buffer length
     if (req->length <= DMA_POOL_BUF_SIZE) {
       dma_pool_free(vg->dma_pool, req->buf, req->dma);
     } else {
@@ -717,7 +718,7 @@ static void set_request_length(struct usb_request *req,
 			       int len)
 {
   if (req->length <= DMA_POOL_BUF_SIZE) {
-    req->length = len;
+    req->length = len; //TODO: explicitly state the buffer length
   }
 }
 
