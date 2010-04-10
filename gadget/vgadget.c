@@ -450,38 +450,54 @@ static int __init vg_alloc(struct vg_dev **vg);
 static void vg_free(struct vg_dev *vg);
 
 /* Sets up the console character device */
-static int cons_chardev_setup(struct vg_dev *vg)
+static void cons_chardev_setup(struct vg_dev *vg)
 {
-  int rc;
-  int cdevno;
-
-  MDBG("Register the console device\n");
-  cdevno = MKDEV(CONS_MAJOR, 0);
   cdev_init(&vg->cons_dev, &cons_fops);
   vg->cons_dev.owner = THIS_MODULE;
   vg->cons_dev.ops = &cons_fops;
   vg->cons_dev.kobj.name = CONS_FNAME;
-  if ((rc = cdev_add(&vg->cons_dev, cdevno, 1)) != 0) {
-    MERROR("Unable to register the console device\n");
+}
+
+/* Registers the console character device */
+static int cons_chardev_add(struct vg_dev *vg)
+{
+  int cdevno;
+  int rc;
+
+  if ((rc = test_and_set_bit(CONS_REGISTERED, &vg->flags)) == 0) {
+    MDBG("Register the console device\n");
+    cdevno = MKDEV(CONS_MAJOR, 0);
+
+    if ((rc = cdev_add(&vg->cons_dev, cdevno, 1)) != 0) {
+      MERROR("Unable to register the console device\n");
+    }
   }
 
   return rc;
 }
 
 /* Sets up the FIFO character device */
-static int fifo_chardev_setup(struct vg_dev *vg)
+static void fifo_chardev_setup(struct vg_dev *vg)
 {
-  int rc;
-  int fdevno;
-
-  MDBG("Register the FIFO device\n");
-  fdevno = MKDEV(FIFO_MAJOR, 0);
   cdev_init(&vg->fifo_dev, &fifo_fops);
   vg->fifo_dev.owner = THIS_MODULE;
   vg->fifo_dev.ops = &fifo_fops;
   vg->fifo_dev.kobj.name = FIFO_FNAME;
-  if ((rc = cdev_add(&vg->fifo_dev, fdevno, 1)) != 0) {
-    MERROR("Unable to register the FIFO device\n");
+}
+
+/* Registers the FIFO character device */
+static int fifo_chardev_add(struct vg_dev *vg)
+{
+  int rc;
+  int fdevno;
+
+  if ((rc = test_and_set_bit(FIFO_REGISTERED, &vg->flags)) == 0) {
+    MDBG("Register the FIFO device\n");
+    fdevno = MKDEV(FIFO_MAJOR, 0);
+
+    if ((rc = cdev_add(&vg->fifo_dev, fdevno, 1)) != 0) {
+      MERROR("Unable to register the FIFO device\n");
+    }
   }
 
   return rc;
@@ -527,15 +543,19 @@ module_init(vg_init);
 /* Unregisters the console character device */
 static void cons_chardev_remove(struct vg_dev *vg)
 {
-  MDBG("Unregister the console device\n");
-  cdev_del(&vg->cons_dev);
+  if (test_and_clear_bit(CONS_REGISTERED, &vg->flags)) {
+    MDBG("Unregister the console device\n");
+    cdev_del(&vg->cons_dev);
+  }
 }
 
 /* Unregisters the FIFO character device */
 static void fifo_chardev_remove(struct vg_dev *vg)
 {
-  MDBG("Unregister the FIFO device\n");
-  cdev_del(&vg->fifo_dev);
+  if (test_and_clear_bit(FIFO_REGISTERED, &vg->flags)) {
+    MDBG("Unregister the FIFO device\n");
+    cdev_del(&vg->fifo_dev);
+  }
 }
 
 /* Request device reconfiguration (prototype) */
@@ -782,6 +802,11 @@ static int __init vg_bind(struct usb_gadget *gadget)
 	set_gadget_data(gadget, vg);
 	vg->ep0 = gadget->ep0;
 	vg->ep0->driver_data = vg;
+
+	/* Initialize the character devices */
+	MDBG("Initialize the character devices\n");
+	cons_chardev_setup(vg);
+	fifo_chardev_setup(vg);
 
 	rc = 0;
 	MDBG("Allocate the DMA pool\n");
@@ -1246,7 +1271,7 @@ static int do_set_cmd_interface(struct vg_dev *vg, int altsetting)
 
   if (rc == 0) {
     /* Register the command-status character device */
-    cons_chardev_setup(vg);
+    cons_chardev_add(vg);
   }
 
   return rc;
@@ -1294,7 +1319,7 @@ static int do_set_fifo_interface(struct vg_dev *vg, int altsetting)
 
   if (rc == 0) {
     /* Register the FIFO character device */
-    fifo_chardev_setup(vg);
+    fifo_chardev_add(vg);
   }
 
   return rc;

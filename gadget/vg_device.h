@@ -63,3 +63,5 @@ struct vg_dev {
 #define RECONFIGURATION         0x02
 #define INTF_RECONFIGURATION    0x03
 #define SUSPENDED               0x04
+#define CONS_REGISTERED         0x05
+#define FIFO_REGISTERED         0x06
