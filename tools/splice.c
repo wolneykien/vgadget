@@ -51,12 +51,16 @@ int main(int argc, char **argv)
   total = atol(argv[3]);
   total_sent = 0;
   do {
+    unsigned long len = total - total_sent;
+    if (len > TRANSFER_LENGTH) {
+      len = TRANSFER_LENGTH;
+    }
     if (pipe_fds[1] > 0) {
       if ((sent = splice(in_fd,
 			 NULL,
 			 pipe_fds[1],
 			 NULL,
-			 TRANSFER_LENGTH,
+			 len,
 			 SPLICE_F_MOVE)) < 0) {
 	perror("[server] Error: unable to splice data from the file");
       }
