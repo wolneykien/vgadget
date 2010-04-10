@@ -1352,6 +1352,7 @@ static int do_set_interface(struct vg_dev *vg,
 static int do_set_config(struct vg_dev *vg, int new_config)
 {
   int	rc = 0;
+  struct usb_request *req;
 
   VDBG(vg, "Reset the configuration\n");
 
@@ -1371,9 +1372,20 @@ static int do_set_config(struct vg_dev *vg, int new_config)
     case USB_SPEED_HIGH:   speed = "high";      break;
     default:               speed = "?";	        break;
     }
+    
     INFO(vg, "Set up the %s speed config number %d\n",
 	 speed,
 	 vg->config);
+  } else {
+    vg->config = 0;
+  }
+
+  if ((rc = allocate_request(vg->ep0, EP0_BUFSIZE, &req)) == 0) {
+    *(u8 *) req->buf = vg->config;
+    set_request_length(req, 1);
+    if ((rc = enqueue_request(vg->ep0, req, ep0_complete)) != 0) {
+      ERROR(vg, "Unable to submit a response to a setup request\n");
+    }
   }
 
   return rc;
