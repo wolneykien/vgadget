@@ -1333,6 +1333,7 @@ static int do_set_interface(struct vg_dev *vg,
 			    int altsetting)
 {
   int rc = 0;
+  struct usb_request *req;
 
   switch (index) {
   case 0:
@@ -1343,6 +1344,15 @@ static int do_set_interface(struct vg_dev *vg,
     break;
   default:
     ERROR(vg, "No such interface: %d\n", index);
+  }
+
+  if ((rc = allocate_request(vg->ep0, EP0_BUFSIZE, &req)) == 0) {
+    *(u8 *) req->buf = vg->intf_config[index];
+    set_request_length(req, 1);
+    if ((rc = enqueue_request(vg->ep0, req, ep0_complete)) != 0) {
+      ERROR(vg, "Unable to submit a response to an interface "
+	    "setup request\n");
+    }
   }
 
   return rc;
