@@ -470,6 +470,7 @@ static int cons_chardev_add(struct vg_dev *vg)
 
     if ((rc = cdev_add(&vg->cons_dev, cdevno, 1)) != 0) {
       MERROR("Unable to register the console device\n");
+      clear_bit(CONS_REGISTERED, &vg->flags);
     }
   }
 
@@ -497,6 +498,7 @@ static int fifo_chardev_add(struct vg_dev *vg)
 
     if ((rc = cdev_add(&vg->fifo_dev, fdevno, 1)) != 0) {
       MERROR("Unable to register the FIFO device\n");
+      clear_bit(FIFO_REGISTERED, &vg->flags);
     }
   }
 
