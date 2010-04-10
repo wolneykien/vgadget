@@ -58,7 +58,7 @@ int main(int argc, char **argv)
 			 NULL,
 			 TRANSFER_LENGTH,
 			 SPLICE_F_MOVE)) < 0) {
-	perror("[server] Error: unable to splice data from the socket");
+	perror("[server] Error: unable to splice data from the file");
       }
     }
 
