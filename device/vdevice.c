@@ -679,6 +679,10 @@ static int vdev_probe(struct usb_interface *interface, const struct usb_device_i
 	int i;
 	int retval = -ENODEV;
 
+	dbg("CS driver is currently probbing for %d:%d\n",
+	    id->idVendor,
+	    id->idProduct);
+
 	/* Check the interface number (0) */
 	if (interface->cur_altsetting->desc.bInterfaceNumber != 0) {
 	  return retval;
@@ -842,6 +846,10 @@ static int vfdev_probe(struct usb_interface *interface, const struct usb_device_
 	struct usb_endpoint_descriptor *endpoint;
 	int i;
 	int retval = -ENODEV;
+
+	dbg("FIFO driver is currently probbing for %d:%d\n",
+	    id->idVendor,
+	    id->idProduct);
 
 	/* Check the interface number (1) */
 	if (interface->cur_altsetting->desc.bInterfaceNumber != 1) {
