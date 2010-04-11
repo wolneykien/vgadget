@@ -156,10 +156,12 @@ static void vdev_delete(struct kref *kref)
 {	
 	struct usb_vdev *dev = to_vdev(kref);
 
+	dbg("Delete the CS device\n");
 	usb_put_dev(dev->udev);
 	if (dev->bulk_status_in_buffer) {
 	  kfree(dev->bulk_status_in_buffer);
 	}
+	dbg("Free the CS device structure\n");
 	kfree(dev);
 }
 
@@ -168,10 +170,12 @@ static void vfdev_delete(struct kref *kref)
 {	
         struct usb_vfdev *dev = to_vfdev(kref);
 
+	dbg("Delete the FIFO device\n");
 	usb_put_dev(dev->udev);
 	if (dev->bulk_in_buffer) {
 	  kfree(dev->bulk_in_buffer);
 	}
+	dbg("Free the FIFO device structure\n");
 	kfree(dev);
 }
 
@@ -771,6 +775,10 @@ static int vfdev_read_ahead_loop(void *context)
   int rc;
 
   dev = (struct usb_vfdev *)context;
+  if (dev == NULL) {
+    err("Read ahead loop: context is NULL\n");
+    return -EFAULT;
+  }
 
   do {
     rc = fifo_read_enqueue(dev);
@@ -778,6 +786,7 @@ static int vfdev_read_ahead_loop(void *context)
 
   dbg("Read ahead process finished (%d)", rc);
   up(&dev->read_ahead_running);
+  dbg("Read-ahead semaphore is up\n");
 
   return rc;
 }
@@ -787,6 +796,7 @@ static int vfdev_read_ahead_start(struct usb_vfdev *dev)
 {
   int rc;
 
+  dbg("Turn down the read-ahead semaphore\n");
   if (down_interruptible(&dev->read_ahead_running) == 0) {
     dbg("Set up the read-ahead thread");
     rc = kernel_thread(vfdev_read_ahead_loop,
@@ -815,12 +825,14 @@ static int vfdev_read_ahead_cleanup(struct usb_vfdev *dev)
   int rc;
 
   rc = 0;
+  dbg("Clean all of the URBS from the queue\n");
   do {
     rc |= vfdev_urb_try_take(dev, &urb);
     if (urb != NULL) {
       free_urb(urb);
     }
   } while (urb == NULL);
+  dbg("Done clean the URBs\n");
 
   return rc;
 }
