@@ -44,7 +44,7 @@ static struct usb_device_id vdev_table[] = {
 	{ USB_DEVICE(0xfff, 0xfff) },
 	{ }					/* Terminating entry */
 };
-MODULE_DEVICE_TABLE (usb, vdev_table);
+//MODULE_DEVICE_TABLE (usb, vdev_table);
 
 /* Parameterize vendor and product IDs */
 module_param_named(vendor, vdev_table[0].idVendor, ushort, S_IRUGO);
