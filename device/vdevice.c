@@ -141,6 +141,7 @@ struct usb_vfdev {
   int read_ahead_pid;
   unsigned long read_ahead_flags;
   struct semaphore read_ahead_running;
+  struct completion read_ahead_exit;
   wait_queue_head_t fifo_wait;
 };
 #define to_vfdev(d) container_of(d, struct usb_vfdev, kref)
@@ -784,9 +785,11 @@ static int vfdev_read_ahead_loop(void *context)
     rc = fifo_read_enqueue(dev);
   } while (rc == 0);
 
-  dbg("Read ahead process finished (%d)", rc);
   up(&dev->read_ahead_running);
   dbg("Read-ahead semaphore is up\n");
+
+  dbg("Read ahead process finished (%d)", rc);
+  complete_and_exit(&dev->read_ahead_exit, rc);
 
   return rc;
 }
@@ -846,6 +849,8 @@ static int vfdev_read_ahead_stop(struct usb_vfdev *dev)
   if (test_and_clear_bit(RUNNING, &dev->read_ahead_flags)) {
     vfdev_read_ahead_cleanup(dev);
   }
+  dbg("Wait for the read-ahead process to finish\n");
+  wait_for_completion(&dev->read_ahead_exit);
 
   return rc;
 }
@@ -879,6 +884,7 @@ static int vfdev_probe(struct usb_interface *interface, const struct usb_device_
 	sema_init(&dev->queue_sem, 0);
 	sema_init(&dev->mutex, 1);
 	sema_init(&dev->read_ahead_running, 1);
+	init_completion(&dev->read_ahead_exit);
 	init_waitqueue_head(&dev->fifo_wait);
 	dev->queue = NULL;
 
