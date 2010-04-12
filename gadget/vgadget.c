@@ -450,12 +450,29 @@ static int __init vg_alloc(struct vg_dev **vg);
 static void vg_free(struct vg_dev *vg);
 
 /* Sets up the console character device */
-static void cons_chardev_setup(struct vg_dev *vg)
+static int cons_chardev_setup(struct vg_dev *vg)
 {
+  int rc;
+
+  down(&vg->mutex);
   cdev_init(&vg->cons_dev, &cons_fops);
   vg->cons_dev.owner = THIS_MODULE;
   vg->cons_dev.ops = &cons_fops;
-  vg->cons_dev.kobj.name = CONS_FNAME;
+  rc = kobject_set_name(&vg->cons_dev.kobj, CONS_FNAME);
+  up(&vg->mutex);
+
+  return rc;
+}
+
+/* Frees up the console character device resources */
+static void cons_chardev_free(struct vg_dev *vg)
+{
+  down(&vg->mutex);
+  if (vg->cons_dev.kobj.name != NULL) {
+    kfree(vg->cons_dev.kobj.name);
+    vg->cons_dev.kobj.name = NULL;
+  }
+  up(&vg->mutex); 
 }
 
 /* Registers the console character device */
@@ -464,6 +481,7 @@ static int cons_chardev_add(struct vg_dev *vg)
   int cdevno;
   int rc;
 
+  down(&vg->mutex);
   if ((rc = test_and_set_bit(CONS_REGISTERED, &vg->flags)) == 0) {
     MDBG("Register the console device\n");
     cdevno = MKDEV(CONS_MAJOR, 0);
@@ -473,17 +491,35 @@ static int cons_chardev_add(struct vg_dev *vg)
       clear_bit(CONS_REGISTERED, &vg->flags);
     }
   }
+  up(&vg->mutex);
 
   return rc;
 }
 
 /* Sets up the FIFO character device */
-static void fifo_chardev_setup(struct vg_dev *vg)
+static int fifo_chardev_setup(struct vg_dev *vg)
 {
+  int rc;
+
+  down(&vg->mutex);
   cdev_init(&vg->fifo_dev, &fifo_fops);
   vg->fifo_dev.owner = THIS_MODULE;
   vg->fifo_dev.ops = &fifo_fops;
-  vg->fifo_dev.kobj.name = FIFO_FNAME;
+  rc = kobject_set_name(&vg->fifo_dev.kobj, FIFO_FNAME);
+  up(&vg->mutex);
+
+  return rc;
+}
+
+/* Frees up the FIFO character device resources */
+static void fifo_chardev_free(struct vg_dev *vg)
+{
+  down(&vg->mutex);
+  if (vg->fifo_dev.kobj.name != NULL) {
+    kfree(vg->fifo_dev.kobj.name);
+    vg->fifo_dev.kobj.name = NULL;
+  }
+  up(&vg->mutex); 
 }
 
 /* Registers the FIFO character device */
@@ -492,6 +528,7 @@ static int fifo_chardev_add(struct vg_dev *vg)
   int rc;
   int fdevno;
 
+  down(&vg->mutex);
   if ((rc = test_and_set_bit(FIFO_REGISTERED, &vg->flags)) == 0) {
     MDBG("Register the FIFO device\n");
     fdevno = MKDEV(FIFO_MAJOR, 0);
@@ -501,6 +538,7 @@ static int fifo_chardev_add(struct vg_dev *vg)
       clear_bit(FIFO_REGISTERED, &vg->flags);
     }
   }
+  up(&vg->mutex);
 
   return rc;
 }
@@ -545,19 +583,25 @@ module_init(vg_init);
 /* Unregisters the console character device */
 static void cons_chardev_remove(struct vg_dev *vg)
 {
+  down(&vg->mutex);
   if (test_and_clear_bit(CONS_REGISTERED, &vg->flags)) {
-    MDBG("Unregister the console device\n");
+    MDBG("Unregister the console device %s\n", vg->cons_dev.kobj.name);
     cdev_del(&vg->cons_dev);
+    vg->cons_dev.kobj.name = NULL;
   }
+  up(&vg->mutex);
 }
 
 /* Unregisters the FIFO character device */
 static void fifo_chardev_remove(struct vg_dev *vg)
 {
+  down(&vg->mutex);
   if (test_and_clear_bit(FIFO_REGISTERED, &vg->flags)) {
-    MDBG("Unregister the FIFO device\n");
+    MDBG("Unregister the FIFO device %s\n", vg->fifo_dev.kobj.name);
     cdev_del(&vg->fifo_dev);
+    vg->fifo_dev.kobj.name = NULL;
   }
+  up(&vg->mutex);
 }
 
 /* Request device reconfiguration (prototype) */
@@ -602,6 +646,7 @@ static int __init vg_alloc(struct vg_dev **vg)
 	  memset(*vg, 0, sizeof *vg);
 	  (*vg)->req_tag = 0;
 	  (*vg)->flags = 0;
+	  sema_init(&(*vg)->mutex, 1);
 	  rc = 0;
 	} else {
 	  rc = -ENOMEM;
@@ -821,20 +866,29 @@ static int __init vg_bind(struct usb_gadget *gadget)
 
 	/* Initialize the character devices */
 	MDBG("Initialize the character devices\n");
-	cons_chardev_setup(vg);
-	fifo_chardev_setup(vg);
+	if ((rc = cons_chardev_setup(vg)) != 0) {
+	  MERROR("Unable to allocate memory on the console "
+	       "device setup\n");
+	}
+	if (rc == 0) {
+	  if ((rc = fifo_chardev_setup(vg)) != 0) {
+	    MERROR("Unable to allocate memory on the FIFO "
+		   "device setup\n");
+	  }
+	}
 
-	rc = 0;
-	MDBG("Allocate the DMA pool\n");
-	vg->gadget->dev.coherent_dma_mask = 0xffffffff;
-	if ((vg->dma_pool =
-	     dma_pool_create(DMA_POOL_NAME,
-			     &gadget->dev, 
-			     DMA_POOL_BUF_SIZE,
-			     PAGE_SIZE,
-			     PAGE_SIZE)) == NULL) {
-	  MERROR("Unable to allocate the DMA pool\n");
-	  rc = -ENOMEM;
+	if (rc == 0) {
+	  MDBG("Allocate the DMA pool\n");
+	  vg->gadget->dev.coherent_dma_mask = 0xffffffff;
+	  if ((vg->dma_pool =
+	       dma_pool_create(DMA_POOL_NAME,
+			       &gadget->dev, 
+			       DMA_POOL_BUF_SIZE,
+			       PAGE_SIZE,
+			       PAGE_SIZE)) == NULL) {
+	    MERROR("Unable to allocate the DMA pool\n");
+	    rc = -ENOMEM;
+	  }
 	}
 
 	if (rc == 0) {
@@ -915,6 +969,9 @@ static void vg_unbind(struct usb_gadget *gadget)
 	DBG(vg, "Free the DMA pool\n");
 	dma_pool_destroy(vg->dma_pool);
 	vg->dma_pool = NULL;
+
+	cons_chardev_free(vg);
+	fifo_chardev_free(vg);
 }
 
 /* Request device reconfiguration */
