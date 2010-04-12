@@ -142,6 +142,8 @@ struct usb_vfdev {
   unsigned long read_ahead_flags;
   struct semaphore read_ahead_running;
   struct completion read_ahead_exit;
+  struct urb *incomplete_urb;
+  unsigned long usb_offs;
   wait_queue_head_t fifo_wait;
 };
 #define to_vfdev(d) container_of(d, struct usb_vfdev, kref)
@@ -613,26 +615,44 @@ static ssize_t fifo_read(struct file *file, char *buffer, size_t count, loff_t *
 {
   struct usb_vfdev *dev;
   struct urb *urb;
-  int rc;
+  size_t len;
+  size_t rc;
 
   dev = (struct usb_vfdev *)file->private_data;
 
   dbg("Process a FIFO read request");
 
-  /* Take the next URB from the queue */
-  if ((rc = vfdev_urb_take(dev, &urb)) == 0) {
+  urb = NULL;
+  if (dev->incomplete_urb) {
+    dbg("Take an incomplete urb: %d/%d",
+	dev->urb_offs,
+	urb->actual_length);
+    urb == dev->incomplete_urb;
+    rc = 0;
+  } else {
+    /* Take the next URB from the queue */
+    rc = vfdev_urb_take(dev, &urb);
+    dev->urb_offs = 0;
+  }
+
+  if (rc == 0) {
     // TODO: copy via DMA
     dbg("Copy taken URB to the userspace");
+    len = min(count, actual_length - dev->urb_offs);
     if ((rc = copy_to_user(buffer,
-			   urb->transfer_buffer,
-			   urb->actual_length)) >= 0) {
-      dbg("Return the actual bytes read: %d/%d",
-	  urb->transfer_buffer_length,
-	  urb->actual_length);
-      rc = urb->actual_length;
+			   urb->transfer_buffer + dev->urb_offs,
+			   len)) >= 0) {
+      dev->urb_offs += len;
+      dbg("Return the actual bytes read: %d/%lu",
+	  urb->actual_length,
+	  dev->urb_offs);
+      rc = len;
     }
-    dbg("Free the URB");
-    free_urb(urb);
+    if (dev->urb_offs = urb->actual_length) {
+      dbg("Free the URB");
+      free_urb(urb);
+      dev->incomplete_urb = NULL;
+    }
   }
 
   /*if (rc == -ERESTARTSYS) {
@@ -948,6 +968,7 @@ static int vfdev_probe(struct usb_interface *interface, const struct usb_device_
 	init_completion(&dev->read_ahead_exit);
 	init_waitqueue_head(&dev->fifo_wait);
 	dev->queue = NULL;
+	dev->incomplete_urb = NULL;
 
 	dev->udev = usb_get_dev(interface_to_usbdev(interface));
 	dev->interface = interface;
