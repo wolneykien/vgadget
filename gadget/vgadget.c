@@ -743,9 +743,6 @@ static int enqueue_request(struct usb_ep *ep,
       req->length,
       ep->name);
   req->complete = complete;
-  if (req->context == NULL) {
-    req->context = vg;
-  }
   rc = usb_ep_queue(ep, req, GFP_ATOMIC);
   if (rc != 0 && rc != -ESHUTDOWN) {
     /* Can't do much more than wait for a reset */
@@ -759,15 +756,21 @@ static int enqueue_request(struct usb_ep *ep,
 /* Handles a finished request of an endpoint */
 static void ep_complete_common(struct usb_ep *ep, struct usb_request *req)
 {
-  struct vg_dev *vg = (struct vg_dev *) req->context;
+  struct vg_dev *vg;
 
-  if (req->status || req->actual != req->length) {
+  vg = (struct vg_dev *) ep->driver_data;
+
+  DBG(vg, "Request completed for %s\n", ep->name);
+
+  if (req->status || req->actual < req->length) {
     WARNING(vg, "Request completed with error: %d %u/%u\n",
-	 req->status, req->actual, req->length);
+	    req->status, req->actual, req->length);
   }
 
   /* Request was cancelled */
   if (req->status == -ECONNRESET) {
+    WARNING(vg, "The request for %s was cancelled\n", ep->name);
+    DBG(vg, "Flush the endpoint FIFO\n");
     usb_ep_fifo_flush(ep);
   }
 }
@@ -1732,6 +1735,12 @@ static void fifo_complete_notify(struct usb_ep *ep,
 
   ep_complete_common(ep, req);
 
+  if (req->actual > req->length) {
+    req->actual = req->length;
+    MDBG("Fix the actual sent value: %lu\n",
+	 (unsigned long) req->actual);
+  }
+
   req_compl = (struct completion *) req->context;
   if (req_compl != NULL) {
     complete(req_compl);
@@ -1788,8 +1797,8 @@ static ssize_t fifo_sendpage (struct file *filp,
 	  DBG(vg, "Wait for the request to complete\n");
 	  wait_for_completion(req_compl);
 	  DBG(vg, "Return the actual amount sent (%d/%d)\n",
-	      length,
-	      req->actual);
+	      req->actual,
+	      length);
 	  len = req->actual;
 	  DBG(vg, "Free a request for page delivery\n");
 	  dma_unmap_page(&vg->gadget->dev, req->dma, length,
