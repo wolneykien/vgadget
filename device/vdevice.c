@@ -406,17 +406,16 @@ static int vfdev_urb_offer(struct usb_vfdev *dev, struct urb *urb)
   struct urb_entry *entry;
   int rc;
 
+  dbg("Turn down the FIFO device mutex");
   if (down_interruptible(&dev->mutex) == 0) {
     /* Make a new queue entry */
+    dbg("Make a new read queue entry");
     entry = kmalloc(sizeof *entry, GFP_KERNEL);
     if (entry != NULL) {
       /* Offer the new entry to the queue */
       entry->urb = urb;
       entry->next = NULL;
       rc = 0;
-      /* Send notifications */
-      up(&dev->queue_sem);
-      wake_up(&dev->fifo_wait);
     } else {
       err("Unable to allocate a read queue entry");
       rc = -ENOMEM;
@@ -430,13 +429,22 @@ static int vfdev_urb_offer(struct usb_vfdev *dev, struct urb *urb)
 	  queue = queue->next;
 	}
 	queue->next = entry;
+	dbg("Add new entry to the tail of the queue\n");
       } else {
+	dbg("New entry is the queue head");
 	dev->queue = entry;
       }
+      /* Send notifications */
+      dbg("Turn up the queue semaphore");
+      up(&dev->queue_sem);
+      dbg("Send wake-up notifications");
+      wake_up(&dev->fifo_wait);
     }
+    dbg("Turn up the FIFO device mutex");
     up(&dev->mutex);
     return rc;
   } else {
+    dbg("Interrupted. Return the restart system value");
     return -ERESTARTSYS;
   }
 }
@@ -471,6 +479,7 @@ static int fifo_read_enqueue(struct usb_vfdev *dev)
   void *buf;
   int rc;
 
+  dbg("Turn down the read-limit semaphore");
   if ((rc = down_interruptible(&dev->limit_sem)) == 0) {
     /* Exit immediately if the read-ahead process has been terminated */
     if (! test_bit(RUNNING, &dev->read_ahead_flags)) {
@@ -520,6 +529,7 @@ static int fifo_read_enqueue(struct usb_vfdev *dev)
     }
     return rc;
   } else {
+    dbg("Interrupted. Return the restart system value");
     return -ERESTARTSYS;
   }
 }
@@ -530,22 +540,28 @@ static int vfdev_urb_try_take(struct usb_vfdev *dev,
 {
   struct urb_entry *next;
 
+  dbg("Try to turn down the queue semaphore");
   if (down_trylock(&dev->queue_sem) == 0) {
+    dbg("Turn down the FIFO device mutex");
     if (down_interruptible(&dev->mutex) == 0) {
       if (dev->queue != NULL) {
 	*urb = dev->queue->urb;
 	next = dev->queue->next;
 	kfree(dev->queue);
 	dev->queue = next;
+	dbg("Turn up the read-limit semaphore");
 	/* Invite the read-ahead procedure to continue */
 	up(&dev->limit_sem);
       } else {
+	dbg("Read queue is empty");
 	*urb = NULL;
       }
+      dbg("Turn up the FIFO device mutex");
       up(&dev->mutex);
       return 0;
     } else {
       *urb = NULL;
+      dbg("Interrupted. Return the restart system value");
       return -ERESTARTSYS;
     }
   } else {
@@ -561,12 +577,15 @@ static int vfdev_urb_take(struct usb_vfdev *dev,
   int rc;
   
   /* Try to take an URB from the queue */
+  dbg("Try to take an URB from the read queue");
   while ((rc = vfdev_urb_try_take(dev, urb)) == 0) {
     if (*urb != NULL) {
       /* Exit with the taken URB */
+      dbg("Successful. Return the taken URB");
       break;
     } else {
       /* Wait for the next available URB */
+      dbg("Turn down the queue semaphore");
       rc = down_interruptible(&dev->queue_sem);
     }
   }
@@ -585,11 +604,16 @@ static ssize_t fifo_read(struct file *file, char *buffer, size_t count, loff_t *
   /* Take the next URB from the queue */
   if ((rc = vfdev_urb_take(dev, &urb)) == 0) {
     // TODO: copy via DMA
+    dbg("Copy taken URB to the userspace");
     if ((rc = copy_to_user(buffer,
 			   urb->transfer_buffer,
 			   urb->actual_length)) >= 0) {
+      dbg("Return the actual bytes read: %d/%d",
+	  urb->transfer_buffer_length,
+	  urb->actual_length);
       rc = urb->actual_length;
     }
+    dbg("Free the URB");
     free_urb(urb);
   }
 
@@ -604,7 +628,7 @@ static unsigned int vdev_poll(struct file *filp,
   struct usb_vdev *dev;
   int rc;
 
-  dev = (struct usb_vdev *)filp->private_data; 
+  dev = (struct usb_vdev *)filp->private_data;
 
   rc = 0;
   if (atomic_read(&dev->cmds_sent) < maxwrites) {
@@ -626,20 +650,27 @@ static unsigned int vfdev_poll(struct file *filp,
   struct usb_vfdev *dev;
   int rc;
 
-  dev = (struct usb_vfdev *)filp->private_data; 
+  dev = (struct usb_vfdev *)filp->private_data;
 
+  dbg("Poll the FIFO device");
+
+  dbg("Turn down the FIFO device mutex");
   if (down_interruptible(&dev->mutex) == 0) { //TODO: use an R/W mutex
     rc = 0;
     if (dev->queue != NULL) {
+      dbg("Report that some data is waiting in the read queue");
       /* Indicate that some data is ready for reading */
       rc |= (POLLIN | POLLRDNORM);
     } else {
       /* Add the FIFO wait-queue to the poll table */
+      dbg("Add the FIFO wait-queue to the poll table");
       poll_wait(filp, &dev->fifo_wait, wait);
     }
+    dbg("Turn down the FIFO device mutex");
     up(&dev->mutex);
     return rc;
   } else {
+    dbg("Interrupted. Return the restart system value");
     return -ERESTARTSYS;
   }
 }
