@@ -763,7 +763,7 @@ static void ep_complete_common(struct usb_ep *ep, struct usb_request *req)
 
   DBG(vg, "Request completed for %s\n", ep->name);
 
-  if (req->status || req->actual < req->length) {
+  if (req->status || req->actual != req->length) {
     WARNING(vg, "Request completed with error: %d %u/%u\n",
 	    req->status, req->actual, req->length);
   }
@@ -1736,12 +1736,6 @@ static void fifo_complete_notify(struct usb_ep *ep,
 
   ep_complete_common(ep, req);
 
-  if (req->actual > req->length) {
-    req->actual = req->length;
-    MDBG("Fix the actual sent value: %lu\n",
-	 (unsigned long) req->actual);
-  }
-
   req_compl = (struct completion *) req->context;
   if (req_compl != NULL) {
     complete(req_compl);
@@ -1770,6 +1764,7 @@ static ssize_t fifo_sendpage (struct file *filp,
       req->buf = page_address(page);
       req->complete = fifo_complete_notify;
       req->length = length;
+      req->actual = 0;
       req->zero = 0;
       len = 0;
     } else {
