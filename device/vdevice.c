@@ -143,7 +143,7 @@ struct usb_vfdev {
   struct semaphore read_ahead_running;
   struct completion read_ahead_exit;
   struct urb *incomplete_urb;
-  unsigned long usb_offs;
+  unsigned long urb_offs;
   wait_queue_head_t fifo_wait;
 };
 #define to_vfdev(d) container_of(d, struct usb_vfdev, kref)
@@ -628,10 +628,10 @@ static ssize_t fifo_read(struct file *file, char *buffer, size_t count, loff_t *
 
   urb = NULL;
   if (dev->incomplete_urb) {
-    dbg("Take an incomplete urb: %d/%d",
+    dbg("Take an incomplete urb: %lu/%d",
 	dev->urb_offs,
 	urb->actual_length);
-    urb == dev->incomplete_urb;
+    urb = dev->incomplete_urb;
     rc = 0;
   } else {
     /* Take the next URB from the queue */
@@ -642,7 +642,8 @@ static ssize_t fifo_read(struct file *file, char *buffer, size_t count, loff_t *
   if (rc == 0) {
     // TODO: copy via DMA
     dbg("Copy taken URB to the userspace");
-    len = min(count, actual_length - dev->urb_offs);
+    len = min((unsigned long) count,
+	      ((unsigned long) urb->actual_length) - dev->urb_offs);
     if ((rc = copy_to_user(buffer,
 			   urb->transfer_buffer + dev->urb_offs,
 			   len)) >= 0) {
@@ -652,7 +653,7 @@ static ssize_t fifo_read(struct file *file, char *buffer, size_t count, loff_t *
 	  dev->urb_offs);
       rc = len;
     }
-    if (dev->urb_offs = urb->actual_length) {
+    if (dev->urb_offs == urb->actual_length) {
       dbg("Free the URB");
       free_urb(urb);
       dev->incomplete_urb = NULL;
