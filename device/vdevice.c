@@ -446,6 +446,8 @@ static void vfdev_bulk_read_callback(struct urb *urb)
 {
   struct usb_vfdev *dev;
 
+  dbg("A FIFO bulk read URB finished");
+
   dev = (struct usb_vfdev *)urb->context;
   if (urb->status && 
       !(urb->status == -ENOENT || 
@@ -454,8 +456,9 @@ static void vfdev_bulk_read_callback(struct urb *urb)
     dbg("%s - nonzero write bulk status received: %d",
 	__FUNCTION__, urb->status);
   } else {
+    dbg("Offer the finished USB to the read queue");
     if (vfdev_urb_offer(dev, urb) != 0) {
-      err("Unable to offer the urb. Free in up");
+      err("Unable to offer the urb. Free it up");
       free_urb(urb);
     }
   }
@@ -480,7 +483,7 @@ static int fifo_read_enqueue(struct usb_vfdev *dev)
     }
     if (rc == 0) {
       buf = usb_buffer_alloc(dev->udev,
-			     READ_BUF_SIZE,
+			     MAX_TRANSFER,
 			     GFP_KERNEL,
 			     &urb->transfer_dma);
       if (buf == NULL) {
@@ -491,12 +494,16 @@ static int fifo_read_enqueue(struct usb_vfdev *dev)
       /* initialize the urb properly */
       usb_fill_bulk_urb(urb, dev->udev,
 			usb_rcvbulkpipe(dev->udev, dev->bulk_in_epaddr),
-			buf, READ_BUF_SIZE, vfdev_bulk_read_callback,
+			buf, MAX_TRANSFER, vfdev_bulk_read_callback,
 			dev);
       urb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
       /* send the read request */
       if ((rc = usb_submit_urb(urb, GFP_KERNEL)) == 0) {
-	dbg("Submit a read-ahead URB");
+	dbg("Submit a read-ahead URB: "
+	    "addr = 0x%x, "
+	    "size = %d b",
+	    dev->bulk_in_epaddr,
+	    urb->transfer_buffer_length);
       } else {
 	err("%s - failed submitting read urb, error %d",
 	    __FUNCTION__,
