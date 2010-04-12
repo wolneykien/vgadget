@@ -599,6 +599,10 @@ static int vfdev_urb_take(struct usb_vfdev *dev,
       /* Wait for the next available URB */
       dbg("Wait for the next available URB. Turn down the queue semaphore");
       if ((rc = down_interruptible(&dev->queue_sem)) == 0) {
+	if (! test_bit(RUNNING, &dev->read_ahead_flags)) {
+	  rc = -EINTR;
+	  break;
+	}
 	down = 1;
       } else {	
 	dbg("Interrupted. Return the restart system value");
@@ -930,6 +934,8 @@ static int vfdev_read_ahead_stop(struct usb_vfdev *dev)
   if (test_and_clear_bit(RUNNING, &dev->read_ahead_flags)) {
     vfdev_read_ahead_cleanup(dev);
   }
+  dbg("Turn up the queue semaphore to interrupt possible waiting");
+  up(&dev->queue_sem);
   dbg("Wait for the read-ahead process to finish\n");
   wait_for_completion(&dev->read_ahead_exit);
 
