@@ -601,6 +601,7 @@ static int __init vg_alloc(struct vg_dev **vg)
 	if (vg) {
 	  memset(*vg, 0, sizeof *vg);
 	  (*vg)->req_tag = 0;
+	  (*vg)->flags = 0;
 	  rc = 0;
 	} else {
 	  rc = -ENOMEM;
