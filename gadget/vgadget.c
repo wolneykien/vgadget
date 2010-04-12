@@ -740,9 +740,13 @@ static int enqueue_request(struct usb_ep *ep,
   struct vg_dev *vg;
 
   vg = ep->driver_data;
-  DBG(vg, "Enqueue a request of size %d b for endpoint %s\n",
+  DBG(vg, "Enqueue a request of size %d/%d b for endpoint %s\n",
+      req->actual,
       req->length,
       ep->name);
+  if (req->actual != 0) {
+    WARN(vg, "Request actual size is not zero!");
+  }
   req->complete = complete;
   rc = usb_ep_queue(ep, req, GFP_ATOMIC);
   if (rc != 0 && rc != -ESHUTDOWN) {
@@ -763,7 +767,7 @@ static void ep_complete_common(struct usb_ep *ep, struct usb_request *req)
 
   DBG(vg, "Request completed for %s\n", ep->name);
 
-  if (req->status || req->actual != req->length) {
+  if (req->status || req->actual < req->length) {
     WARNING(vg, "Request completed with error: %d %u/%u\n",
 	    req->status, req->actual, req->length);
   }
@@ -1736,6 +1740,14 @@ static void fifo_complete_notify(struct usb_ep *ep,
 
   ep_complete_common(ep, req);
 
+  if (req->actual > req->length) {
+    MDBG("Fix the actual sent value: %d/%d -> %d\n",
+	 req->actual,
+	 req->length,
+	 req->length);
+    req->actual = req->length;
+  }// TODO: fix the accumulation effect
+
   req_compl = (struct completion *) req->context;
   if (req_compl != NULL) {
     complete(req_compl);
@@ -1800,6 +1812,10 @@ static ssize_t fifo_sendpage (struct file *filp,
 	  dma_unmap_page(&vg->gadget->dev, req->dma, length,
 			 DMA_TO_DEVICE);
 	  usb_ep_free_request(vg->bulk_in, req);
+	  if (!more) {
+	    DBG(vg, "No more data to send -- flush the EP FIFO\n");
+	    usb_ep_fifo_flush(vg->bulk_in);
+	  }
 	  kfree(req_compl);
 	} else {
 	  ERROR(vg, "Unable to enqueue a USB request\n");
