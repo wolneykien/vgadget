@@ -596,8 +596,13 @@ static int vfdev_urb_take(struct usb_vfdev *dev,
     } else {
       /* Wait for the next available URB */
       dbg("Wait for the next available URB. Turn down the queue semaphore");
-      rc = down_interruptible(&dev->queue_sem);
-      down = 1;
+      if ((rc = down_interruptible(&dev->queue_sem)) == 0) {
+	down = 1;
+      } else {	
+	dbg("Interrupted. Return the restart system value");
+	rc = -ERESTARTSYS;
+	break;
+      }
     }
   }
   return rc;
