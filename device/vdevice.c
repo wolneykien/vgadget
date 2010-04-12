@@ -886,7 +886,7 @@ static int vfdev_read_ahead_cleanup(struct usb_vfdev *dev)
   rc = 0;
   dbg("Clean all of the URBS from the queue\n");
   do {
-    rc |= vfdev_urb_try_take(dev, &urb);
+    rc |= vfdev_urb_try_take(dev, &urb, 0);
     if (urb != NULL) {
       free_urb(urb);
     }
