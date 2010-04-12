@@ -1694,12 +1694,12 @@ static int fifo_mmap (struct file *filp, struct vm_area_struct *vma)
 
   vg = (struct vg_dev *) filp->private_data;
   if (vg != NULL) {
-    DBG(vg, "Map a FIFO buffer of %lud bytes\n",
+    DBG(vg, "Map a FIFO buffer of %lu bytes\n",
 	vma->vm_end - vma->vm_start);
     if ((rc = allocate_request(vg->bulk_in,
 			       vma->vm_end - vma->vm_start,
 			       &req)) != 0) {
-      ERROR(vg, "Unable to allocate a request of size %lud b\n",
+      ERROR(vg, "Unable to allocate a request of size %lu b\n",
 	    vma->vm_end - vma->vm_start);
     } else {
       req->context = vg;
