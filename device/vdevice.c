@@ -536,13 +536,14 @@ static int fifo_read_enqueue(struct usb_vfdev *dev)
 
 /* Take one URB from the head of the queue if any */
 static int vfdev_urb_try_take(struct usb_vfdev *dev,
-			      struct urb **urb)
+			      struct urb **urb,
+			      int down)
 {
   struct urb_entry *next;
   int rc;
 
   dbg("Try to turn down the queue semaphore");
-  if (down_trylock(&dev->queue_sem) == 0) {
+  if (down || down_trylock(&dev->queue_sem) == 0) {
     dbg("The queue semaphore has been turned down");
     dbg("Turn down the FIFO device mutex");
     if (down_interruptible(&dev->mutex) == 0) {
@@ -581,10 +582,13 @@ static int vfdev_urb_take(struct usb_vfdev *dev,
 			  struct urb **urb)
 {
   int rc;
+  int down;
   
+  down = 0;
   /* Try to take an URB from the queue */
   dbg("Try to take an URB from the read queue");
-  while ((rc = vfdev_urb_try_take(dev, urb)) == 0) {
+  while ((rc = vfdev_urb_try_take(dev, urb, down)) == 0) {
+    down = 0;
     if (*urb != NULL) {
       /* Exit with the taken URB */
       dbg("Successful. Return the taken URB");
@@ -593,6 +597,7 @@ static int vfdev_urb_take(struct usb_vfdev *dev,
       /* Wait for the next available URB */
       dbg("Wait for the next available URB. Turn down the queue semaphore");
       rc = down_interruptible(&dev->queue_sem);
+      down = 1;
     }
   }
   return rc;
