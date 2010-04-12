@@ -667,6 +667,11 @@ static int allocate_request(struct usb_ep *ep,
     if (size <= DMA_POOL_BUF_SIZE) {
       (*req)->buf =
 	dma_pool_alloc(vg->dma_pool, GFP_KERNEL, &(*req)->dma);
+      if ((*req)->buf != NULL) {
+	MDBG("Use pool buffer 0x%lx/0x%lx\n",
+	     (unsigned long) (*req)->buf,
+	     (unsigned long) (*req)->dma);
+      }
     } else {
       MWARNING("Allocate a large coherent DMA buffer not from the pool\n");
       (*req)->buf =
