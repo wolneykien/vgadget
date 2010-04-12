@@ -539,9 +539,11 @@ static int vfdev_urb_try_take(struct usb_vfdev *dev,
 			      struct urb **urb)
 {
   struct urb_entry *next;
+  int rc;
 
   dbg("Try to turn down the queue semaphore");
   if (down_trylock(&dev->queue_sem) == 0) {
+    dbg("The queue semaphore has been turned down");
     dbg("Turn down the FIFO device mutex");
     if (down_interruptible(&dev->mutex) == 0) {
       if (dev->queue != NULL) {
@@ -553,21 +555,25 @@ static int vfdev_urb_try_take(struct usb_vfdev *dev,
 	/* Invite the read-ahead procedure to continue */
 	up(&dev->limit_sem);
       } else {
-	dbg("Read queue is empty");
+	err("Error: semaphore is up but read queue is empty");
 	*urb = NULL;
+	rc = 1;
       }
       dbg("Turn up the FIFO device mutex");
       up(&dev->mutex);
-      return 0;
+      rc = 0;
     } else {
       *urb = NULL;
       dbg("Interrupted. Return the restart system value");
-      return -ERESTARTSYS;
+      rc = -ERESTARTSYS;
     }
   } else {
+    dbg("Semaphore is down: read queue is empty");
     *urb = NULL;
-    return 0;
+    rc = 0;
   }
+
+  return rc;
 }
 
 /* Takes one URB from the head of the queue */
@@ -585,7 +591,7 @@ static int vfdev_urb_take(struct usb_vfdev *dev,
       break;
     } else {
       /* Wait for the next available URB */
-      dbg("Turn down the queue semaphore");
+      dbg("Wait for the next available URB. Turn down the queue semaphore");
       rc = down_interruptible(&dev->queue_sem);
     }
   }
@@ -601,6 +607,8 @@ static ssize_t fifo_read(struct file *file, char *buffer, size_t count, loff_t *
 
   dev = (struct usb_vfdev *)file->private_data;
 
+  dbg("Process a FIFO read request");
+
   /* Take the next URB from the queue */
   if ((rc = vfdev_urb_take(dev, &urb)) == 0) {
     // TODO: copy via DMA
@@ -615,6 +623,11 @@ static ssize_t fifo_read(struct file *file, char *buffer, size_t count, loff_t *
     }
     dbg("Free the URB");
     free_urb(urb);
+  }
+
+  if (rc == -ERESTARTSYS) {
+    dbg("Read interrupted. Force return -EINTR code");
+    rc = -EINTR;
   }
 
   return rc;
