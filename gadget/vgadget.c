@@ -347,7 +347,7 @@ vg_driver = {
 #define CONS_FNAME "usbconsS"
 #define CONS_MAJOR 63
 #define FIFO_FNAME "usbconsF"
-#define FIFO_MAJOR 73
+#define FIFO_MAJOR 127
 
 /* Define operations for the character devices */
 static ssize_t cmd_read (struct file *, char __user *, size_t, loff_t *);
