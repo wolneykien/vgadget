@@ -635,10 +635,10 @@ static ssize_t fifo_read(struct file *file, char *buffer, size_t count, loff_t *
     free_urb(urb);
   }
 
-  if (rc == -ERESTARTSYS) {
+  /*if (rc == -ERESTARTSYS) {
     dbg("Read interrupted. Force return -EINTR code");
     rc = -EINTR;
-  }
+  }*/
 
   return rc;
 }
