@@ -1331,7 +1331,8 @@ static int do_set_fifo_interface(struct vg_dev *vg, int altsetting)
 /* Resets the interface setting and re-init endpoints */
 static int do_set_interface(struct vg_dev *vg,
 			    int index,
-			    int altsetting)
+			    int altsetting,
+			    int reply)
 {
   int rc = 0;
   struct usb_request *req;
@@ -1347,7 +1348,7 @@ static int do_set_interface(struct vg_dev *vg,
     ERROR(vg, "No such interface: %d\n", index);
   }
 
-  if (altsetting >= 0) {
+  if (altsetting >= 0 && reply) {
     if ((rc = allocate_request(vg->ep0, EP0_BUFSIZE, &req)) == 0) {
       //      *(u8 *) req->buf = vg->intf_config[index];
       set_request_length(req, 0);
@@ -1372,13 +1373,16 @@ static int do_set_config(struct vg_dev *vg, int new_config)
   /* Disable the single interface */
   DBG(vg, "Disable the interfaces\n");
   vg->config = 0;
-  rc |= do_set_interface(vg, 0, -1);
-  rc |= do_set_interface(vg, 1, -1);
+  rc |= do_set_interface(vg, 0, -1, 0);
+  rc |= do_set_interface(vg, 1, -1, 0);
 
   if (new_config > 0) {
     char *speed;
     DBG(vg, "Setup the configuration number %d\n", new_config);
     vg->config = new_config;
+    DBG(vg, "Enable the interfaces\n");
+    rc |= do_set_interface(vg, 0, 0, 0);
+    rc |= do_set_interface(vg, 1, 0, 0);
     switch (vg->gadget->speed) {
     case USB_SPEED_LOW:	   speed = "low";       break;
     case USB_SPEED_FULL:   speed = "full";      break;
@@ -1435,7 +1439,8 @@ static int main_process(void *context)
 	  vg->intf_index);
       if (do_set_interface(vg,
 			   vg->intf_index,
-			   vg->intf_config[vg->intf_index]) != 0) {
+			   vg->intf_config[vg->intf_index],
+			   1) != 0) {
 	ERROR(vg, "Error on device interface reconfiguration\n");
       }
       clear_bit(INTF_RECONFIGURATION, &vg->flags);
