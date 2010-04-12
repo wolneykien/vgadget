@@ -1467,7 +1467,8 @@ static int do_set_config(struct vg_dev *vg, int new_config)
     vg->config = 0;
   }
 
-  if ((rc = allocate_request(vg->ep0, EP0_BUFSIZE, &req)) == 0) {
+  if (new_config > 0 && \
+      (rc = allocate_request(vg->ep0, EP0_BUFSIZE, &req)) == 0) {
     //*(u8 *) req->buf = vg->config;
     set_request_length(req, 0);
     if ((rc = enqueue_request(vg->ep0, req, ep0_complete)) != 0) {
