@@ -41,7 +41,7 @@ struct vg_dev {
         int                     intf_index;
         u8                      intf_config[2];
 	volatile unsigned int	req_tag;
-  struct semaphore        mutex;
+//        struct semaphore        mutex;
         unsigned long		flags;
         int			pid;
         struct completion       main_event;

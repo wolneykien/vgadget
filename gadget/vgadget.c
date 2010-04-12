@@ -438,7 +438,7 @@ static int __exit vg_main_process_terminate(struct vg_dev*vg)
 
   rc = 0;
   DBG(vg, "Terminate the main process");
-  set_bit(RUNNING, &vg->flags);
+  clear_bit(RUNNING, &vg->flags);
   complete(&vg->main_event);
   wait_for_completion(&vg->main_exit);
 
@@ -454,12 +454,12 @@ static int cons_chardev_setup(struct vg_dev *vg)
 {
   int rc;
 
-  down(&vg->mutex);
+  //  down(&vg->mutex);
   cdev_init(&vg->cons_dev, &cons_fops);
   vg->cons_dev.owner = THIS_MODULE;
   vg->cons_dev.ops = &cons_fops;
   rc = kobject_set_name(&vg->cons_dev.kobj, CONS_FNAME);
-  up(&vg->mutex);
+  //  up(&vg->mutex);
 
   return rc;
 }
@@ -467,12 +467,12 @@ static int cons_chardev_setup(struct vg_dev *vg)
 /* Frees up the console character device resources */
 static void cons_chardev_free(struct vg_dev *vg)
 {
-  down(&vg->mutex);
+  //  down(&vg->mutex);
   if (vg->cons_dev.kobj.name != NULL) {
     kfree(vg->cons_dev.kobj.name);
     vg->cons_dev.kobj.name = NULL;
   }
-  up(&vg->mutex); 
+  //  up(&vg->mutex); 
 }
 
 /* Registers the console character device */
@@ -481,7 +481,7 @@ static int cons_chardev_add(struct vg_dev *vg)
   int cdevno;
   int rc;
 
-  down(&vg->mutex);
+  //  down(&vg->mutex);
   if ((rc = test_and_set_bit(CONS_REGISTERED, &vg->flags)) == 0) {
     MDBG("Register the console device\n");
     cdevno = MKDEV(CONS_MAJOR, 0);
@@ -491,7 +491,7 @@ static int cons_chardev_add(struct vg_dev *vg)
       clear_bit(CONS_REGISTERED, &vg->flags);
     }
   }
-  up(&vg->mutex);
+  //  up(&vg->mutex);
 
   return rc;
 }
@@ -501,12 +501,12 @@ static int fifo_chardev_setup(struct vg_dev *vg)
 {
   int rc;
 
-  down(&vg->mutex);
+  //  down(&vg->mutex);
   cdev_init(&vg->fifo_dev, &fifo_fops);
   vg->fifo_dev.owner = THIS_MODULE;
   vg->fifo_dev.ops = &fifo_fops;
   rc = kobject_set_name(&vg->fifo_dev.kobj, FIFO_FNAME);
-  up(&vg->mutex);
+  //  up(&vg->mutex);
 
   return rc;
 }
@@ -514,12 +514,12 @@ static int fifo_chardev_setup(struct vg_dev *vg)
 /* Frees up the FIFO character device resources */
 static void fifo_chardev_free(struct vg_dev *vg)
 {
-  down(&vg->mutex);
+  //  down(&vg->mutex);
   if (vg->fifo_dev.kobj.name != NULL) {
     kfree(vg->fifo_dev.kobj.name);
     vg->fifo_dev.kobj.name = NULL;
   }
-  up(&vg->mutex); 
+  //  up(&vg->mutex); 
 }
 
 /* Registers the FIFO character device */
@@ -528,7 +528,7 @@ static int fifo_chardev_add(struct vg_dev *vg)
   int rc;
   int fdevno;
 
-  down(&vg->mutex);
+  //  down(&vg->mutex);
   if ((rc = test_and_set_bit(FIFO_REGISTERED, &vg->flags)) == 0) {
     MDBG("Register the FIFO device\n");
     fdevno = MKDEV(FIFO_MAJOR, 0);
@@ -538,7 +538,7 @@ static int fifo_chardev_add(struct vg_dev *vg)
       clear_bit(FIFO_REGISTERED, &vg->flags);
     }
   }
-  up(&vg->mutex);
+  //  up(&vg->mutex);
 
   return rc;
 }
@@ -583,25 +583,25 @@ module_init(vg_init);
 /* Unregisters the console character device */
 static void cons_chardev_remove(struct vg_dev *vg)
 {
-  down(&vg->mutex);
+  //  down(&vg->mutex);
   if (test_and_clear_bit(CONS_REGISTERED, &vg->flags)) {
     MDBG("Unregister the console device %s\n", vg->cons_dev.kobj.name);
     cdev_del(&vg->cons_dev);
     vg->cons_dev.kobj.name = NULL;
   }
-  up(&vg->mutex);
+  //  up(&vg->mutex);
 }
 
 /* Unregisters the FIFO character device */
 static void fifo_chardev_remove(struct vg_dev *vg)
 {
-  down(&vg->mutex);
+  //  down(&vg->mutex);
   if (test_and_clear_bit(FIFO_REGISTERED, &vg->flags)) {
     MDBG("Unregister the FIFO device %s\n", vg->fifo_dev.kobj.name);
     cdev_del(&vg->fifo_dev);
     vg->fifo_dev.kobj.name = NULL;
   }
-  up(&vg->mutex);
+  //  up(&vg->mutex);
 }
 
 /* Request device reconfiguration (prototype) */
@@ -646,7 +646,7 @@ static int __init vg_alloc(struct vg_dev **vg)
 	  memset(*vg, 0, sizeof *vg);
 	  (*vg)->req_tag = 0;
 	  (*vg)->flags = 0;
-	  sema_init(&(*vg)->mutex, 1);
+	  //	  sema_init(&(*vg)->mutex, 1);
 	  rc = 0;
 	} else {
 	  rc = -ENOMEM;
@@ -969,9 +969,6 @@ static void vg_unbind(struct usb_gadget *gadget)
 	DBG(vg, "Free the DMA pool\n");
 	dma_pool_destroy(vg->dma_pool);
 	vg->dma_pool = NULL;
-
-	cons_chardev_free(vg);
-	fifo_chardev_free(vg);
 }
 
 /* Request device reconfiguration */
@@ -1494,7 +1491,7 @@ static int main_process(void *context)
 
   rc = 0;
   wait_for_completion(&vg->main_event);
-  while (test_bit(REGISTERED, &vg->flags)) {
+  while (test_bit(RUNNING, &vg->flags)) {
     DBG(vg, "Process an event\n");
     if (test_bit(RECONFIGURATION, &vg->flags)) {
       /* Reconfigure the device */
