@@ -142,8 +142,8 @@ struct usb_vfdev {
   unsigned long read_ahead_flags;
   struct semaphore read_ahead_running;
   struct completion read_ahead_exit;
-  struct urb *incomplete_urb;
-  unsigned long urb_offs;
+  struct urb *current_urb;
+  unsigned long current_offs;
   wait_queue_head_t fifo_wait;
 };
 #define to_vfdev(d) container_of(d, struct usb_vfdev, kref)
@@ -614,11 +614,30 @@ static int vfdev_urb_take(struct usb_vfdev *dev,
   return rc;
 }
 
+/* Leaves the current incomplete URB if any or a next one
+ * from the queue */
+static int vfdev_prepare_urb(struct usb_vfdev *dev)
+{
+  int rc;
+
+  if (dev->current_urb) {
+    dbg("Use the incomplete URB: %lu/%d",
+	dev->current_offs,
+	dev->current_urb->actual_length);
+    rc = 0;
+  } else {
+    /* Take the next URB from the queue */
+    rc = vfdev_urb_take(dev, &dev->current_urb);
+    dev->current_offs = 0;
+  }
+
+  return rc;
+}
+
 /* Interface procedure for reading file data from a gadget */
 static ssize_t fifo_read(struct file *file, char *buffer, size_t count, loff_t *ppos)
 {
   struct usb_vfdev *dev;
-  struct urb *urb;
   size_t len;
   size_t rc;
 
@@ -626,37 +645,27 @@ static ssize_t fifo_read(struct file *file, char *buffer, size_t count, loff_t *
 
   dbg("Process a FIFO read request");
 
-  urb = NULL;
-  if (dev->incomplete_urb) {
-    dbg("Take an incomplete urb: %lu/%d",
-	dev->urb_offs,
-	urb->actual_length);
-    urb = dev->incomplete_urb;
-    rc = 0;
-  } else {
-    /* Take the next URB from the queue */
-    rc = vfdev_urb_take(dev, &urb);
-    dev->urb_offs = 0;
-  }
+  rc = vfdev_prepare_urb(dev);
 
   if (rc == 0) {
-    // TODO: copy via DMA
     dbg("Copy taken URB to the userspace");
     len = min((unsigned long) count,
-	      ((unsigned long) urb->actual_length) - dev->urb_offs);
+	      ((unsigned long) dev->current_urb->actual_length) \
+	      - dev->current_offs);
     if ((rc = copy_to_user(buffer,
-			   urb->transfer_buffer + dev->urb_offs,
+			   dev->current_urb->transfer_buffer \
+			   + dev->current_offs,
 			   len)) >= 0) {
-      dev->urb_offs += len;
+      dev->current_offs += len;
       dbg("Return the actual bytes read: %d/%lu",
-	  urb->actual_length,
-	  dev->urb_offs);
+	  dev->current_urb->actual_length,
+	  dev->current_offs);
       rc = len;
     }
-    if (dev->urb_offs == urb->actual_length) {
+    if (dev->current_offs == dev->current_urb->actual_length) {
       dbg("Free the URB");
-      free_urb(urb);
-      dev->incomplete_urb = NULL;
+      free_urb(dev->current_urb);
+      dev->current_urb = NULL;
     }
   }
 
@@ -666,6 +675,143 @@ static ssize_t fifo_read(struct file *file, char *buffer, size_t count, loff_t *
   }*/
 
   return rc;
+}
+
+/* Releases the URB related to a given FIFO pipe buffer if any */
+static void fifo_pipe_buf_release(struct pipe_inode_info *pipe,
+				  struct pipe_buffer *buf)
+{
+  struct urb *urb;
+
+  urb = (struct urb *)page_private(buf->page);
+
+  if (urb != NULL) {
+    dbg("Free an URB all the data has been read from");
+    free_urb(urb);
+  }
+}
+
+/* Describes the FIFO pipe buffer operations */
+static const struct pipe_buf_operations fifo_pipe_buf_ops = {
+  .can_merge = 0,
+  .map = generic_pipe_buf_map,
+  .unmap = generic_pipe_buf_unmap,
+  .confirm = generic_pipe_buf_confirm,
+  .release = fifo_pipe_buf_release,
+  .steal = generic_pipe_buf_steal,
+  .get = generic_pipe_buf_get,
+};
+
+/* Releases the given page (currently do nothing) */
+static void fifo_page_release(struct splice_pipe_desc *spd,
+			      unsigned int i)
+{
+}
+
+/* Splices the number of buffers to a given pipe */
+static ssize_t fifo_splice_read(struct file *in,
+				loff_t *ppos,
+				struct pipe_inode_info *pipe,
+				size_t count,
+				unsigned int flags)
+{
+  struct page *pages[PIPE_BUFFERS];
+  struct partial_page partial[PIPE_BUFFERS];
+  struct splice_pipe_desc spd = {
+    .pages = pages,
+    .nr_pages = 0,
+    .partial = partial,
+    .flags = flags,
+    .ops = &fifo_pipe_buf_ops,
+    .spd_release = fifo_page_release,
+  };
+  ssize_t ret;
+  size_t mapped;
+  int rc;
+
+  dbg("Process a FIFO read request");
+
+  /* Ignore the position -- splice the data as it comes */
+
+  /* Splice the data to the pipe until the len bytes spliced */
+  rc = 0;
+  ret = 0;
+  mapped = 0;
+  while (rc == 0 && ret < count) {
+    size_t spliced;
+
+    /* Map up the pipe buffers */
+    spd.nr_pages = 0;
+    while (rc == 0 \
+	   && mapped < count \
+	   && spd.nr_pages < PIPE_BUFFERS) {
+      struct page *page;
+      unsigned long offs;
+      unsigned long len;
+
+      /* Get the URB and offset to transfer */
+      if ((rc = vfdev_prepare_urb(dev)) == 0) {
+	/* Add URB page to the pipe */
+	page =
+	  virt_to_page(dev->current_urb->transfer_buffer	\
+		       + dev->current_offs);
+	pages[spd.nr_pages] = page;
+	/* Calculate the in-page offset of the buffer start */
+	offs =
+	  dev->current_urb->transfer_buffer		\
+	  + dev->current_offs				\
+	  - page_to_virt(page);
+	partial[spd.nr_pages].offset = offs;
+	/* Calculate the data length on the page */
+	len =
+	  min((unsigned long) PAGE_SIZE - offs,
+	      ((unsigned long) dev->current_urb->actual_length)	\
+	      - dev->current_offs);
+	partial[spd.nr_pages].len = len;
+	/* Increment the pages counter */
+	dbg("Add a page to the pipe");
+	spd.nr_pages++;
+	/* Shift the URB budder offset len bytes more */
+	if ((dev->current_offs += len)			\
+	    == dev->current_urb->actual_length) {
+	  dbg("Whole URB buffer is mapped to the pipe");
+	  /* Set the URB as a page private data to free it when the
+	   * data is read */
+	  set_page_private(page, (unsigned long) dev->current_urb);
+	  dev->current_urb = NULL;
+	} else {
+	  dbg("%ld/%ld of the URB buffer is mapped to the pipe",
+	      dev->current_offs,
+	      dev->current_urb->actual_length);
+	  set_page_private(page, (unsigned long) NULL);
+	}
+	mapped += len;
+      }
+    }
+
+    /* Splice the mapped buffers out */
+    if (rc == 0) {
+      if ((spliced = splice_to_pipe(pipe, &spd)) > 0) {
+	dbg("%ld (more) bytes has been spliced");
+	ret += spliced;
+      } else {
+	if (spliced == 0 && (flags & SPLICE_F_NONBLOCK)) {
+	  rc = -EAGAIN;
+	  err("Signal to read again in the case of non-clocking reading");
+	} else {
+	  rc = spliced;
+	  err("Unable to splice the mapped buffers to the pipe");
+	}
+      }
+    }
+  }
+
+  /* In the case of an error return its code */
+  if (rc != 0) {
+    ret = rc;
+  }
+
+  return ret;
 }
 
 /* Returns a bit mask indicating the current non-blocking
@@ -747,6 +893,7 @@ static struct file_operations vfdev_fops = {
 	.open =		vfdev_open,
 	.release =	vfdev_release,
 	.poll =         vfdev_poll,
+	.splice_read =  fifo_splice_read,
 };
 
 /* FIFO USB class driver info */
@@ -975,7 +1122,7 @@ static int vfdev_probe(struct usb_interface *interface, const struct usb_device_
 	init_completion(&dev->read_ahead_exit);
 	init_waitqueue_head(&dev->fifo_wait);
 	dev->queue = NULL;
-	dev->incomplete_urb = NULL;
+	dev->current_urb = NULL;
 
 	dev->udev = usb_get_dev(interface_to_usbdev(interface));
 	dev->interface = interface;
