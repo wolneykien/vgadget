@@ -310,7 +310,7 @@ static const struct usb_descriptor_header *hs_function[] = {
  */
 
 /* Lifecycle prototypes */
-static int __init vg_bind(struct usb_gadget *gadget);
+static int vg_bind(struct usb_gadget *gadget);
 static void vg_unbind(struct usb_gadget *gadget);
 static void vg_disconnect(struct usb_gadget *gadget);
 static int vg_setup(struct usb_gadget *gadget,
@@ -647,9 +647,9 @@ static void vg_free(struct vg_dev *vg)
 }
 
 /* Configure the endpoint automatically */
-static int __init autoconfig_endpoint(struct vg_dev *vg,
-				       struct usb_ep **ep,
-				       struct usb_endpoint_descriptor *desc)
+static int autoconfig_endpoint(struct vg_dev *vg,
+			       struct usb_ep **ep,
+			       struct usb_endpoint_descriptor *desc)
 {
   int rc;
   *ep = usb_ep_autoconfig(vg->gadget, desc);
@@ -838,7 +838,7 @@ static void vg_resume(struct usb_gadget *gadget)
 static void ep0_complete(struct usb_ep *ep, struct usb_request *req);
 
 /* Bind procedure implementation */
-static int __init vg_bind(struct usb_gadget *gadget)
+static int vg_bind(struct usb_gadget *gadget)
 {
 	struct vg_dev *vg = the_vg;
 	int rc;
