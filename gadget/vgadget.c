@@ -464,17 +464,6 @@ static int cons_chardev_setup(struct vg_dev *vg)
   return rc;
 }
 
-/* Frees up the console character device resources */
-static void cons_chardev_free(struct vg_dev *vg)
-{
-  //  down(&vg->mutex);
-  if (vg->cons_dev.kobj.name != NULL) {
-    kfree(vg->cons_dev.kobj.name);
-    vg->cons_dev.kobj.name = NULL;
-  }
-  //  up(&vg->mutex); 
-}
-
 /* Registers the console character device */
 static int cons_chardev_add(struct vg_dev *vg)
 {
@@ -509,17 +498,6 @@ static int fifo_chardev_setup(struct vg_dev *vg)
   //  up(&vg->mutex);
 
   return rc;
-}
-
-/* Frees up the FIFO character device resources */
-static void fifo_chardev_free(struct vg_dev *vg)
-{
-  //  down(&vg->mutex);
-  if (vg->fifo_dev.kobj.name != NULL) {
-    kfree(vg->fifo_dev.kobj.name);
-    vg->fifo_dev.kobj.name = NULL;
-  }
-  //  up(&vg->mutex); 
 }
 
 /* Registers the FIFO character device */
