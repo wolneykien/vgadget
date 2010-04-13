@@ -1702,9 +1702,11 @@ static int fifo_vma_fault(struct vm_area_struct *vma,
 
   mreq = (struct usb_mapped_request *) vma->vm_private_data;
   if (mreq != NULL) {
-    MDBG("Handle page fault request at 0x%lx\n", vmf->pgoff);
+    MDBG("Handle page fault request at 0x%lx\n",
+	 vmf->pgoff << PAGE_SHIFT);
     //vmf->page = NOPAGE_SIGBUS;
-    vmf->page = virt_to_page(mreq->req->buf + vmf->pgoff);
+    vmf->page = virt_to_page(mreq->req->buf			\
+			     + (vmf->pgoff << PAGE_SHIFT));
     if (vmf->page != NULL) {
       get_page(vmf->page);
       vmf->flags |= VM_FAULT_MINOR;
