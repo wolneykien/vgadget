@@ -774,7 +774,7 @@ static int enqueue_request(struct usb_ep *ep,
       req->length,
       ep->name);
   if (req->actual != 0) {
-    WARN(vg, "Request actual size is not zero!");
+    WARNING(vg, "Request actual size is not zero!");
   }
   req->complete = complete;
   rc = usb_ep_queue(ep, req, GFP_ATOMIC);
