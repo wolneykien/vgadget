@@ -22,6 +22,9 @@
 #include <linux/kthread.h>
 #include <asm/bitops.h>
 #include <linux/wait.h>
+#include <linux/splice.h>
+#include <linux/mm.h>
+#include <asm/page.h>
 
 /* Various macros */
 #define info(format, arg...) \
@@ -715,6 +718,7 @@ static ssize_t fifo_splice_read(struct file *in,
 				size_t count,
 				unsigned int flags)
 {
+  struct usb_vfdev *dev;
   struct page *pages[PIPE_BUFFERS];
   struct partial_page partial[PIPE_BUFFERS];
   struct splice_pipe_desc spd = {
@@ -728,6 +732,8 @@ static ssize_t fifo_splice_read(struct file *in,
   ssize_t ret;
   size_t mapped;
   int rc;
+
+  dev = (struct usb_vfdev *)in->private_data;
 
   dbg("Process a FIFO read request");
 
@@ -760,7 +766,7 @@ static ssize_t fifo_splice_read(struct file *in,
 	offs =
 	  dev->current_urb->transfer_buffer		\
 	  + dev->current_offs				\
-	  - page_to_virt(page);
+	  - page_address(page);
 	partial[spd.nr_pages].offset = offs;
 	/* Calculate the data length on the page */
 	len =
@@ -782,7 +788,7 @@ static ssize_t fifo_splice_read(struct file *in,
 	} else {
 	  dbg("%ld/%ld of the URB buffer is mapped to the pipe",
 	      dev->current_offs,
-	      dev->current_urb->actual_length);
+	      (unsigned long) dev->current_urb->actual_length);
 	  set_page_private(page, (unsigned long) NULL);
 	}
 	mapped += len;
@@ -792,7 +798,7 @@ static ssize_t fifo_splice_read(struct file *in,
     /* Splice the mapped buffers out */
     if (rc == 0) {
       if ((spliced = splice_to_pipe(pipe, &spd)) > 0) {
-	dbg("%ld (more) bytes has been spliced");
+	dbg("%ld (more) bytes has been spliced", (unsigned long) spliced);
 	ret += spliced;
       } else {
 	if (spliced == 0 && (flags & SPLICE_F_NONBLOCK)) {
