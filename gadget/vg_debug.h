@@ -29,12 +29,16 @@
 	xprintk(dev , KERN_DEBUG , fmt , ## args)
 #define MDBG(fmt,args...) \
 	printk(KERN_DEBUG DRIVER_NAME ": " fmt , ## args)
+#define MWARNING(fmt,args...) \
+	printk(KERN_WARNING DRIVER_NAME ": " fmt , ## args)
 static void dump_msg(struct vg_dev *vg, const char *label,
 		     const u8 *buf, unsigned int length);
 #else
 #define DBG(dev,fmt,args...) \
 	do { } while (0)
 #define MDBG(fmt,args...) \
+	do { } while (0)
+#define MWARNING(fmt,args...) \
 	do { } while (0)
 static void inline dump_msg(struct vg_dev *vg, const char *label,
 			    const u8 *buf, unsigned int length);
@@ -55,7 +59,7 @@ static void inline dump_msg(struct vg_dev *vg, const char *label,
 #define MERROR(fmt,args...) \
         printk(KERN_ERR DRIVER_NAME ": " fmt , ## args)
 
-#define WARN(dev,fmt,args...) \
+#define WARNING(dev,fmt,args...) \
 	xprintk(dev , KERN_WARNING , fmt , ## args)
 
 #define INFO(dev,fmt,args...) \

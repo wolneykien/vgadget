@@ -24,78 +24,45 @@
  * A gadget device object
  */
 
+/* DMA pool parameters */
 
-/* A thread control structure */
-struct vg_thread_ctl {
-	int			thread_wakeup_needed;
-	struct completion	thread_notifier;
-	int			thread_pid;
-	struct task_struct	*thread_task;
-	sigset_t		thread_signal_mask;
-};
-
-/* The set of gadget states */
-enum vg_state {
-	VG_STATE_TERMINATED = -7,
-	VG_STATE_EXIT,
-	VG_STATE_DISCONNECT,
-	VG_STATE_CONFIG_CHANGE,
-	VG_STATE_INTERFACE_CHANGE,
-	VG_STATE_RESET,
-        VG_STATE_ABORT_BULK_OUT,
-	VG_STATE_IDLE = 0,
-	VG_STATE_RUNNING,
-        VG_STATE_COMMAND_PHASE,
-	VG_STATE_DATA_PHASE,
-	VG_STATE_STATUS_PHASE,
-};
+#define DMA_POOL_NAME "vgadget"
+#define DMA_POOL_SIZE 8
+#define DMA_POOL_BUF_SIZE PAGE_SIZE
 
 /* A gadget device structure */
 struct vg_dev {
         /* Low-level device link */
 	struct usb_gadget	*gadget;
+        struct dma_pool         *dma_pool;
 
         /* State and control */
         u8			config;
-        u8			new_config;
-	u32			tag;
+        int                     intf_index;
+        u8                      intf_config[2];
 	volatile unsigned int	req_tag;
-	unsigned int		exception_req_tag;
-	enum vg_state		state;
-       	rwlock_t		state_lock;
-        unsigned long           irq_state;
-        struct semaphore        exception_sem;
-	unsigned long		flags;
+//        struct semaphore        mutex;
+        unsigned long		flags;
+        int			pid;
+        struct completion       main_event;
+        struct completion       main_exit;
 
         /* Endpoints */
 	struct usb_ep		*ep0;
-        struct usb_request	*ep0_req;
 	struct usb_ep		*bulk_out;
 	struct usb_ep		*bulk_in;
         struct usb_ep		*bulk_status_in;
 
-        /* Buffer queues */
-        struct vg_buffer_queue  out_bufq;
-        struct vg_buffer_queue  in_bufq;
-        struct vg_buffer_queue  status_in_bufq;
-
-        /* Thread control */
-        struct vg_thread_ctl    thread_ctl;
+        /* Character devices */
+        struct cdev             cons_dev;
+        struct cdev             fifo_dev;
 };
 
 /* Constatns for state flags */
-#define REGISTERED		0
-#define CLEAR_BULK_HALTS	1
-#define SUSPENDED		2
-
-/* The type of gadget device function */
-typedef void (*vg_dev_proc_t)(struct vg_dev *);
-
-
-/* Lifecycle prototypes */
-static int vg_alloc(struct vg_dev **vg);
-static void vg_free(struct vg_dev *vg);
-
-/* Exception handling prototypes */
-static void raise_exception(struct vg_dev *vg, enum vg_state new_state);
-static int inline exception_in_progress(struct vg_dev *vg);
+#define REGISTERED              0x00
+#define RUNNING                 0x01
+#define RECONFIGURATION         0x02
+#define INTF_RECONFIGURATION    0x03
+#define SUSPENDED               0x04
+#define CONS_REGISTERED         0x05
+#define FIFO_REGISTERED         0x06
