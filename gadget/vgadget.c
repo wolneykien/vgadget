@@ -475,6 +475,10 @@ static int cons_chardev_add(struct vg_dev *vg)
     MDBG("Register the console device\n");
     cdevno = MKDEV(CONS_MAJOR, 0);
 
+    if (vg->cons_dev.kobj.name == NULL) {
+      rc = kobject_set_name(&vg->cons_dev.kobj, CONS_FNAME);
+    }
+
     if ((rc = cdev_add(&vg->cons_dev, cdevno, 1)) != 0) {
       MERROR("Unable to register the console device\n");
       clear_bit(CONS_REGISTERED, &vg->flags);
@@ -510,6 +514,10 @@ static int fifo_chardev_add(struct vg_dev *vg)
   if ((rc = test_and_set_bit(FIFO_REGISTERED, &vg->flags)) == 0) {
     MDBG("Register the FIFO device\n");
     fdevno = MKDEV(FIFO_MAJOR, 0);
+
+    if (vg->fifo_dev.kobj.name == NULL) {
+      rc = kobject_set_name(&vg->fifo_dev.kobj, FIFO_FNAME);
+    }
 
     if ((rc = cdev_add(&vg->fifo_dev, fdevno, 1)) != 0) {
       MERROR("Unable to register the FIFO device\n");
@@ -565,7 +573,6 @@ static void cons_chardev_remove(struct vg_dev *vg)
   if (test_and_clear_bit(CONS_REGISTERED, &vg->flags)) {
     MDBG("Unregister the console device %s\n", vg->cons_dev.kobj.name);
     cdev_del(&vg->cons_dev);
-    vg->cons_dev.kobj.name = NULL;
   }
   //  up(&vg->mutex);
 }
@@ -577,7 +584,6 @@ static void fifo_chardev_remove(struct vg_dev *vg)
   if (test_and_clear_bit(FIFO_REGISTERED, &vg->flags)) {
     MDBG("Unregister the FIFO device %s\n", vg->fifo_dev.kobj.name);
     cdev_del(&vg->fifo_dev);
-    vg->fifo_dev.kobj.name = NULL;
   }
   //  up(&vg->mutex);
 }
