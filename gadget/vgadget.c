@@ -469,7 +469,7 @@ static int cons_chardev_add(struct vg_dev *vg)
   //  down(&vg->mutex);
   if ((rc = test_and_set_bit(CONS_REGISTERED, &vg->flags)) == 0) {
     MDBG("Register the console device\n");
-    MKDEV(CONS_MAJOR, 0);
+    //    MKDEV(CONS_MAJOR, 0);
 
     if ((rc = register_chrdev(CONS_MAJOR,
 			      CONS_FNAME,
@@ -491,7 +491,7 @@ static int fifo_chardev_add(struct vg_dev *vg)
   //  down(&vg->mutex);
   if ((rc = test_and_set_bit(FIFO_REGISTERED, &vg->flags)) == 0) {
     MDBG("Register the FIFO device\n");
-    MKDEV(FIFO_MAJOR, 0);
+    //    MKDEV(FIFO_MAJOR, 0);
 
     if ((rc = register_chrdev(FIFO_MAJOR,
 			      FIFO_FNAME,
