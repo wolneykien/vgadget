@@ -86,6 +86,12 @@ static int maxreads = 4;
 module_param_named(maxreads, maxreads, int, S_IRUGO);
 MODULE_PARM_DESC(maxreads, "The number of read-ahead buffers");
 
+/* Fake read parameter */
+static int fakeread = 0;
+module_param_named(fakeread, fakeread, int, S_IRUGO);
+MODULE_PARM_DESC(fakeread, "Short-circuit the read loop "
+		 "to measure maximum speed");
+
 /* Common structure to hold working data of the devices */
 struct usb_vdev_common {
   /* general params */
@@ -513,17 +519,25 @@ static int fifo_read_enqueue(struct usb_vfdev *dev)
 			buf, MAX_TRANSFER, vfdev_bulk_read_callback,
 			dev);
       urb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
-      /* send the read request */
-      if ((rc = usb_submit_urb(urb, GFP_KERNEL)) == 0) {
-	dbg("Submit a read-ahead URB: "
-	    "addr = 0x%x, "
-	    "size = %d b",
-	    dev->bulk_in_epaddr,
-	    urb->transfer_buffer_length);
+
+      if (fakeread) {
+	/* Short-circuit the URB: put it directly into the read queue */
+	urb->actual_length = urb->transfer_buffer_length;
+	urb->status = 0;
+	rc = vfdev_urb_offer(dev, urb);
       } else {
-	err("%s - failed submitting read urb, error %d",
-	    __FUNCTION__,
-	    rc);
+	/* Send the read request */
+	if ((rc = usb_submit_urb(urb, GFP_KERNEL)) == 0) {
+	  dbg("Submit a read-ahead URB: "
+	      "addr = 0x%x, "
+	      "size = %d b",
+	      dev->bulk_in_epaddr,
+	      urb->transfer_buffer_length);
+	} else {
+	  err("%s - failed submitting read urb, error %d",
+	      __FUNCTION__,
+	      rc);
+	}
       }
     }
 
