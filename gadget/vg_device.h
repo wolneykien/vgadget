@@ -57,10 +57,8 @@ struct vg_dev {
         struct usb_ep		*bulk_status_in;
 
         /* Character devices */
-        struct cdev             cons_dev;
         struct usb_request      *next_cmd_req;
         ssize_t                 next_cmd_offs;
-        struct cdev             fifo_dev;
 };
 
 /* Constatns for state flags */

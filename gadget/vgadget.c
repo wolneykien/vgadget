@@ -461,39 +461,19 @@ static int __exit vg_main_process_terminate(struct vg_dev*vg)
 static int vg_alloc(struct vg_dev **vg);
 static void vg_free(struct vg_dev *vg);
 
-/* Sets up the console character device */
-static int cons_chardev_setup(struct vg_dev *vg)
-{
-  int rc;
-
-  //  down(&vg->mutex);
-  cdev_init(&vg->cons_dev, &cons_fops);
-  vg->cons_dev.owner = THIS_MODULE;
-  rc = 0; //kobject_set_name(&vg->cons_dev.kobj, CONS_FNAME);
-  //  up(&vg->mutex);
-
-  return rc;
-}
-
 /* Registers the console character device */
 static int cons_chardev_add(struct vg_dev *vg)
 {
-  int cdevno;
   int rc;
 
   //  down(&vg->mutex);
   if ((rc = test_and_set_bit(CONS_REGISTERED, &vg->flags)) == 0) {
     MDBG("Register the console device\n");
-    if (vg->cons_dev.ops == NULL) {
-      cons_chardev_setup(vg);
-    }
-    cdevno = MKDEV(CONS_MAJOR, 0);
+    MKDEV(CONS_MAJOR, 0);
 
-    if (vg->cons_dev.kobj.name == NULL) {
-      rc = kobject_set_name(&vg->cons_dev.kobj, CONS_FNAME);
-    }
-
-    if ((rc = cdev_add(&vg->cons_dev, cdevno, 1)) != 0) {
+    if ((rc = register_chrdev(CONS_MAJOR,
+			      CONS_FNAME,
+			      &cons_fops)) != 0) {
       MERROR("Unable to register the console device\n");
       clear_bit(CONS_REGISTERED, &vg->flags);
     }
@@ -503,39 +483,19 @@ static int cons_chardev_add(struct vg_dev *vg)
   return rc;
 }
 
-/* Sets up the FIFO character device */
-static int fifo_chardev_setup(struct vg_dev *vg)
-{
-  int rc;
-
-  //  down(&vg->mutex);
-  cdev_init(&vg->fifo_dev, &fifo_fops);
-  vg->fifo_dev.owner = THIS_MODULE;
-  rc = 0; //kobject_set_name(&vg->fifo_dev.kobj, FIFO_FNAME);
-  //  up(&vg->mutex);
-
-  return rc;
-}
-
 /* Registers the FIFO character device */
 static int fifo_chardev_add(struct vg_dev *vg)
 {
   int rc;
-  int fdevno;
 
   //  down(&vg->mutex);
   if ((rc = test_and_set_bit(FIFO_REGISTERED, &vg->flags)) == 0) {
     MDBG("Register the FIFO device\n");
-    if (vg->fifo_dev.ops == NULL) {
-      fifo_chardev_setup(vg);
-    }
-    fdevno = MKDEV(FIFO_MAJOR, 0);
+    MKDEV(FIFO_MAJOR, 0);
 
-    if (vg->fifo_dev.kobj.name == NULL) {
-      rc = kobject_set_name(&vg->fifo_dev.kobj, FIFO_FNAME);
-    }
-
-    if ((rc = cdev_add(&vg->fifo_dev, fdevno, 1)) != 0) {
+    if ((rc = register_chrdev(FIFO_MAJOR,
+			      FIFO_FNAME,
+			      &fifo_fops)) != 0) {
       MERROR("Unable to register the FIFO device\n");
       clear_bit(FIFO_REGISTERED, &vg->flags);
     }
@@ -593,8 +553,8 @@ static void cons_chardev_remove(struct vg_dev *vg)
 {
   //  down(&vg->mutex);
   if (test_and_clear_bit(CONS_REGISTERED, &vg->flags)) {
-    MDBG("Unregister the console device %s\n", vg->cons_dev.kobj.name);
-    cdev_del(&vg->cons_dev);
+    MDBG("Unregister the console device\n");
+    unregister_chrdev(CONS_MAJOR, CONS_FNAME);
   }
   //  up(&vg->mutex);
 }
@@ -604,8 +564,8 @@ static void fifo_chardev_remove(struct vg_dev *vg)
 {
   //  down(&vg->mutex);
   if (test_and_clear_bit(FIFO_REGISTERED, &vg->flags)) {
-    MDBG("Unregister the FIFO device %s\n", vg->fifo_dev.kobj.name);
-    cdev_del(&vg->fifo_dev);
+    MDBG("Unregister the FIFO device\n");
+    unregister_chrdev(FIFO_MAJOR, FIFO_FNAME);
   }
   //  up(&vg->mutex);
 }
@@ -1656,7 +1616,7 @@ static int cons_open (struct inode *inode, struct file *filp)
   int rc;
 
   rc = 0;
-  vg = container_of(inode->i_cdev, struct vg_dev, cons_dev);
+  vg = the_vg;
   DBG(vg, "Open the console device\n");
 
   filp->private_data = vg;
@@ -1718,7 +1678,7 @@ static int fifo_open (struct inode *inode, struct file *filp)
   int rc;
 
   rc = 0;
-  vg = container_of(inode->i_cdev, struct vg_dev, fifo_dev);
+  vg = the_vg;
   DBG(vg, "Open the FIFO device\n");
 
   filp->private_data = vg;
