@@ -26,6 +26,8 @@
 #include <linux/mm.h>
 #include <asm/page.h>
 
+#include "pipem.c"
+
 /* Various macros */
 #define info(format, arg...) \
   printk(KERN_INFO KBUILD_MODNAME ": " format "\n", ##arg)
@@ -687,6 +689,8 @@ static void fifo_pipe_buf_release(struct pipe_inode_info *pipe,
   struct urb *urb;
 
   urb = (struct urb *)page_private(buf->page);
+  dbg("Release a page");
+  //  page_cache_release(buf->page);
 
   if (urb != NULL) {
     dbg("Free an URB all the data has been read from");
@@ -709,6 +713,8 @@ static const struct pipe_buf_operations fifo_pipe_buf_ops = {
 static void fifo_page_release(struct splice_pipe_desc *spd,
 			      unsigned int i)
 {
+  dbg("Release a page #%d", i);
+  page_cache_release(spd->pages[i]);
 }
 
 /* Splices the number of buffers to a given pipe */
@@ -735,7 +741,7 @@ static ssize_t fifo_splice_read(struct file *in,
 
   dev = (struct usb_vfdev *)in->private_data;
 
-  dbg("Process a FIFO read request");
+  dbg("Process a FIFO splice-read request");
 
   /* Ignore the position -- splice the data as it comes */
 
