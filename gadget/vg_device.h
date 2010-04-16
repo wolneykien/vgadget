@@ -46,6 +46,7 @@ struct vg_dev {
         int			pid;
         struct completion       main_event;
         struct completion       main_exit;
+        struct completion       bind_complete;
         struct semaphore        fifo_wrlim;
         struct semaphore        cmd_read_mutex;
 

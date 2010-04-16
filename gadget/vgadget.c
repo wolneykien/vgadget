@@ -555,6 +555,7 @@ static int __init vg_init(void)
 
 	MDBG("Allocate the gadget device\n");
 	rc = vg_alloc(&the_vg);
+	init_completion(&the_vg->bind_complete);
 	if (rc == 0) {
 	  MDBG("Register the gadget device driver\n");
 	  rc = usb_gadget_register_driver(&vg_driver);
@@ -567,6 +568,10 @@ static int __init vg_init(void)
 	} else {
 	  MERROR("Unable to allocate the gadget device object\n");
 	}
+
+	MDBG("Wait for the gadget device to bind to the "
+	     "USB subsystem\n");
+	wait_for_completion(&the_vg->bind_complete);
 
 	if (rc == 0) {
 	  rc = vg_main_process_start(the_vg);
@@ -954,6 +959,8 @@ static __init int vg_bind(struct usb_gadget *gadget)
 	  DBG(vg, "Claim gadget as self-powered\n");
 	  usb_gadget_set_selfpowered(gadget);
 	}
+
+	complete(&vg->bind_complete);
 
 	return rc;
 }
