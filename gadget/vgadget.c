@@ -33,6 +33,7 @@
 #include <asm/bitops.h>
 #include <asm/atomic.h>
 #include <linux/mm.h>
+#include <asm/uaccess.h>
 
 /*
  * Local inclusions
@@ -1526,7 +1527,7 @@ static int main_process(void *context)
  */
 
 /* Handles the read-command request completion */
-static void fifo_complete(struct usb_ep *ep, struct usb_request *req)
+static void cmdread_complete(struct usb_ep *ep, struct usb_request *req)
 {
   struct vg_dev *vg;
 
@@ -1548,7 +1549,8 @@ static int request_next_cmd(struct vg_dev *vg)
 			     &vg->next_cmd_req)) == 0) {
     DBG(vg, "Enqueue the request for the next command\n");
     if ((rc = enqueue_request(vg->bulk_out,
-			      vg->next_cmd_req)) != 0) {
+			      vg->next_cmd_req,
+			      cmdread_complete)) != 0) {
       ERROR(vg, "Unable to enqueue the read-command request\n");
     }
   } else {
@@ -1564,6 +1566,7 @@ static ssize_t cmd_read (struct file *filp,
 			 size_t count,
 			 loff_t *offp)
 {
+  int rc;
   ssize_t len;
   struct vg_dev *vg;
 
@@ -1575,19 +1578,18 @@ static ssize_t cmd_read (struct file *filp,
     if (vg->next_cmd_req != NULL) {
       if (vg->next_cmd_req->status == 0) {
 	len = min(count,
-		  vg->next_cmd_req->actual_length - vg->next_cmd_offs);
-	if ((rc = copy_to_user(buf,
-			       vg->next_cmd_req->actual_length
+		  vg->next_cmd_req->actual - vg->next_cmd_offs);
+	if ((rc = copy_to_user(buf,			       
 			       vg->next_cmd_req->buf + vg->next_cmd_offs,
 			       len)) == 0) {
 	  vg->next_cmd_offs += len;
-	  if (vg->next_cmd_offs == vg->next_cmd_req->actual_length) {
+	  if (vg->next_cmd_offs == vg->next_cmd_req->actual) {
 	    vg->next_cmd_req = NULL;
 	    request_next_cmd(vg);
 	  }
 	} else {
 	  ERROR(vg, "Unable to copy the command data to the user\n");
-	  len = -EFAULT;
+	  len = rc;
 	}
       } else {
 	ERROR(vg, "Command-read error (%d)\n",
