@@ -1520,22 +1520,25 @@ static int request_next_cmd(struct vg_dev *vg)
 {
   int rc;
 
+  vg->next_cmd_req = NULL;
+  vg->next_cmd_offs = 0;
+
   DBG(vg, "Allocate a request for the next command\n");
   if (vg->next_cmd_req == NULL) {
     if ((rc = allocate_request(vg->bulk_out,
 			       CONS_BUFSIZE,
-			       &vg->next_cmd_req)) == 0) {
-    } else {
+			       &vg->next_cmd_req)) != 0) {
       ERROR(vg, "Unable to allocate a read-command request/buffer\n");
     }
   }
-  vg->next_cmd_req = NULL;
-  vg->next_cmd_offs = 0;
-  DBG(vg, "Enqueue the request for the next command\n");
-  if ((rc = enqueue_request(vg->bulk_out,
-			    vg->next_cmd_req,
-			    cmdread_complete)) != 0) {
-    ERROR(vg, "Unable to enqueue the read-command request\n");
+
+  if (rc == 0) {
+    DBG(vg, "Enqueue the request for the next command\n");
+    if ((rc = enqueue_request(vg->bulk_out,
+			      vg->next_cmd_req,
+			      cmdread_complete)) != 0) {
+      ERROR(vg, "Unable to enqueue the read-command request\n");
+    }
   }
 
   return rc;
