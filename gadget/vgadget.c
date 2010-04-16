@@ -469,7 +469,6 @@ static int cons_chardev_setup(struct vg_dev *vg)
   //  down(&vg->mutex);
   cdev_init(&vg->cons_dev, &cons_fops);
   vg->cons_dev.owner = THIS_MODULE;
-  vg->cons_dev.ops = &cons_fops;
   rc = 0; //kobject_set_name(&vg->cons_dev.kobj, CONS_FNAME);
   //  up(&vg->mutex);
 
@@ -485,6 +484,9 @@ static int cons_chardev_add(struct vg_dev *vg)
   //  down(&vg->mutex);
   if ((rc = test_and_set_bit(CONS_REGISTERED, &vg->flags)) == 0) {
     MDBG("Register the console device\n");
+    if (vg->cons_dev.ops == NULL) {
+      cons_chardev_setup(vg);
+    }
     cdevno = MKDEV(CONS_MAJOR, 0);
 
     if (vg->cons_dev.kobj.name == NULL) {
@@ -509,7 +511,6 @@ static int fifo_chardev_setup(struct vg_dev *vg)
   //  down(&vg->mutex);
   cdev_init(&vg->fifo_dev, &fifo_fops);
   vg->fifo_dev.owner = THIS_MODULE;
-  vg->fifo_dev.ops = &fifo_fops;
   rc = 0; //kobject_set_name(&vg->fifo_dev.kobj, FIFO_FNAME);
   //  up(&vg->mutex);
 
@@ -525,6 +526,9 @@ static int fifo_chardev_add(struct vg_dev *vg)
   //  down(&vg->mutex);
   if ((rc = test_and_set_bit(FIFO_REGISTERED, &vg->flags)) == 0) {
     MDBG("Register the FIFO device\n");
+    if (vg->fifo_dev.ops == NULL) {
+      fifo_chardev_setup(vg);
+    }
     fdevno = MKDEV(FIFO_MAJOR, 0);
 
     if (vg->fifo_dev.kobj.name == NULL) {
@@ -882,23 +886,11 @@ static __init int vg_bind(struct usb_gadget *gadget)
 	struct vg_dev *vg = the_vg;
 	int rc;
 
+	rc = 0;
 	vg->gadget = gadget;
 	set_gadget_data(gadget, vg);
 	vg->ep0 = gadget->ep0;
 	vg->ep0->driver_data = vg;
-
-	/* Initialize the character devices */
-	MDBG("Initialize the character devices\n");
-	if ((rc = cons_chardev_setup(vg)) != 0) {
-	  MERROR("Unable to allocate memory on the console "
-	       "device setup\n");
-	}
-	if (rc == 0) {
-	  if ((rc = fifo_chardev_setup(vg)) != 0) {
-	    MERROR("Unable to allocate memory on the FIFO "
-		   "device setup\n");
-	  }
-	}
 
 	if (rc == 0) {
 	  MDBG("Allocate the DMA pool\n");
