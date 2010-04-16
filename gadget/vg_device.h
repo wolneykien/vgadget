@@ -46,6 +46,7 @@ struct vg_dev {
         int			pid;
         struct completion       main_event;
         struct completion       main_exit;
+        struct semaphore        fifo_wrlim;
 
         /* Endpoints */
 	struct usb_ep		*ep0;
@@ -66,3 +67,4 @@ struct vg_dev {
 #define SUSPENDED               0x04
 #define CONS_REGISTERED         0x05
 #define FIFO_REGISTERED         0x06
+#define FIFO_ERROR              0x07

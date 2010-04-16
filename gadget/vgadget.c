@@ -70,9 +70,11 @@ static struct {
         char            *product_name;
 	char		*serial;
         char            *filename;
+        int             maxwrites;
 } mod_data = {					// Default values
 	.vendor		= DRIVER_VENDOR_ID,
 	.product	= DRIVER_PRODUCT_ID,
+	.maxwrites      = 16,
 };
 
 /* Bulk-only class specific requests */
@@ -404,6 +406,9 @@ MODULE_PARM_DESC(product_name, "Product name");
 module_param_named(serial, mod_data.serial, charp, S_IRUGO);
 MODULE_PARM_DESC(serial, "Gadget serial number");
 
+module_param_named(maxwrites, mod_data.maxwrites, uint, S_IRUGO);
+MODULE_PARM_DESC(maxwrites, "Maximal number of buffered writes");
+
 /* The gadget device object */
 static struct vg_dev *the_vg;
 
@@ -631,6 +636,9 @@ static int __init vg_alloc(struct vg_dev **vg)
 	  (*vg)->req_tag = 0;
 	  (*vg)->flags = 0;
 	  //	  sema_init(&(*vg)->mutex, 1);
+	  INFO((*vg), "Maximum number of buffered FIFO writes: %d\n",
+	       mod_data.maxwrites);
+	  sema_init(&(*vg)->fifo_wrlim, mod_data.maxwrites);
 	  rc = 0;
 	} else {
 	  rc = -ENOMEM;
@@ -1627,6 +1635,8 @@ static int fifo_release (struct inode *inode, struct file *filp)
   filp->private_data = NULL;
   if (vg != NULL) {
     DBG(vg, "Release the FIFO device\n");
+    if (test_and_clear_bit(FIFO_ERROR, &vg->flags)) {
+      DBG(vg, "Clear the FIFO error flag\n");
   } else {
     MERROR("File private data is NULL\n");
   }
@@ -1773,13 +1783,36 @@ static int fifo_mmap (struct file *filp, struct vm_area_struct *vma)
   return rc;
 }
 
-/* Handles a finished FIFO request and send notification */
+/* Free the page reqeust resources */
+static void free_page_request(struct usb_ep *ep,
+			      struct usb_request *req)
+{
+  struct vg_dev *vg;
+
+  vg = (struct vg_dev *vg) ep->driver_data;
+
+  DBG(vg, "Free a request for page delivery\n");
+  dma_unmap_page(&vg->gadget->dev, req->dma, req->length,
+		 DMA_TO_DEVICE);
+  usb_ep_free_request(ep, req);
+}
+
+/* Handles a finished FIFO request, set error status accordingly 
+ * and sent the notification */
 static void fifo_complete_notify(struct usb_ep *ep,
 				 struct usb_request *req)
 {
+  struct vg_dev *vg;
   struct completion *req_compl;
 
   ep_complete_common(ep, req);
+
+  vg = (struct vg_dev *vg) ep->driver_data;
+
+  if (req->status != 0 || req->actual < req->length) {
+    DBG("Set the FIFO error status\n");
+    set_bit(FIFO_ERROR, &vg->flags);
+  }
 
   if (req->actual > req->length) {
     MDBG("Fix the actual sent value: %d/%d -> %d\n",
@@ -1791,9 +1824,12 @@ static void fifo_complete_notify(struct usb_ep *ep,
 
   req_compl = (struct completion *) req->context;
   if (req_compl != NULL) {
+    DBG("Sent request completion notification");
     complete(req_compl);
   } else {
-    MERROR("No nofinication handler\n");
+    free_page_request(ep, req);
+    DBG(vg, "Turn up the FIFO write limit semaphore\n");
+    up(&vg->fifo_wrlim);
   }
 }
 
@@ -1810,6 +1846,12 @@ static ssize_t fifo_sendpage (struct file *filp,
   struct usb_request *req;
 
   vg = (struct vg_dev *) filp->private_data;
+
+  if (test_bit(FIFO_ERROR, &vg->flags) != 0) {
+    ERROR(vg, "One or more FIFO requests failed\n");
+    len = -EFAULT;
+  }
+
   if (vg != NULL) {
     DBG(vg, "Send a page over the USB channel\n");
     DBG(vg, "Allocate a request for page delivery\n");
@@ -1835,43 +1877,51 @@ static ssize_t fifo_sendpage (struct file *filp,
 				 offset,
 				 length,
 				 DMA_TO_DEVICE)) != 0) {
-      struct completion *req_compl;
-      if ((req_compl =
-	   kmalloc(sizeof *req_compl, GFP_KERNEL)) != NULL) {
-	init_completion(req_compl);
-	req->context = req_compl;
+      struct completion req_compl;
+      if (!more) {
+	init_completion(&req_compl);
+	req->context = &req_compl;
+      } else {
+	req->context = NULL;
+      }
+      DBG(vg, "Turn down the FIFO write limit semaphore\n");
+      if (down_interruptible(&vg->fifo_wrlim) == 0) {
 	if (enqueue_request(vg->bulk_in,
 			    req,
 			    fifo_complete_notify) == 0) {
-	  DBG(vg, "Wait for the request to complete\n");
-	  wait_for_completion(req_compl);
-	  DBG(vg, "Return the actual amount sent (%d/%d)\n",
-	      req->actual,
-	      length);
-	  len = req->actual;
-	  DBG(vg, "Free a request for page delivery\n");
-	  dma_unmap_page(&vg->gadget->dev, req->dma, length,
-			 DMA_TO_DEVICE);
-	  usb_ep_free_request(vg->bulk_in, req);
 	  if (!more) {
+	    DBG(vg, "No more data to send. "
+		"Wait for the request to complete\n");
+	    wait_for_completion(&req_compl);
+	    DBG("Last request finished (%d/%d)\n",
+		req->actual,
+		length);
+	    if (test_bit(FIFO_ERROR, &vg->flags) == 0) {
+	      len = req->actual;
+	    } else {
+	      ERROR(vg, "One or more FIFO requests failed\n");
+	      len = -EFAULT;
+	    }
+	    free_page_request(vg->bulk_in, req);
+	    DBG(vg, "Turn up the FIFO write limit semaphore\n");
+	    up(&vg->fifo_wrlim);
 	    DBG(vg, "No more data to send -- flush the EP FIFO\n");
 	    usb_ep_fifo_flush(vg->bulk_in);
 	  }
-	  kfree(req_compl);
 	} else {
 	  ERROR(vg, "Unable to enqueue a USB request\n");
 	  len = -EFAULT;
 	}
       } else {
-	ERROR(vg, "Unable to allocate a completion object\n");
-	len = -ENOMEM;
+	ERROR(vg, "Interrupted. Send restart system signal\n");
+	len = -ERESTARTSYS;
       }
     } else {
       ERROR(vg, "Unable to map a page for DMA\n");
       len = -EFAULT;
     }
   }
-
+  
   return len;
 }
 
