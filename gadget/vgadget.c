@@ -625,7 +625,7 @@ module_exit(vg_cleanup);
  */
 
 /* Allocates memory and scheduler objects used by this module */
-static int __init vg_alloc(struct vg_dev **vg)
+static int vg_alloc(struct vg_dev **vg)
 {
         int rc;
 
@@ -1637,6 +1637,7 @@ static int fifo_release (struct inode *inode, struct file *filp)
     DBG(vg, "Release the FIFO device\n");
     if (test_and_clear_bit(FIFO_ERROR, &vg->flags)) {
       DBG(vg, "Clear the FIFO error flag\n");
+    }
   } else {
     MERROR("File private data is NULL\n");
   }
@@ -1789,7 +1790,7 @@ static void free_page_request(struct usb_ep *ep,
 {
   struct vg_dev *vg;
 
-  vg = (struct vg_dev *vg) ep->driver_data;
+  vg = (struct vg_dev *) ep->driver_data;
 
   DBG(vg, "Free a request for page delivery\n");
   dma_unmap_page(&vg->gadget->dev, req->dma, req->length,
@@ -1807,10 +1808,10 @@ static void fifo_complete_notify(struct usb_ep *ep,
 
   ep_complete_common(ep, req);
 
-  vg = (struct vg_dev *vg) ep->driver_data;
+  vg = (struct vg_dev *) ep->driver_data;
 
   if (req->status != 0 || req->actual < req->length) {
-    DBG("Set the FIFO error status\n");
+    DBG(vg, "Set the FIFO error status\n");
     set_bit(FIFO_ERROR, &vg->flags);
   }
 
@@ -1824,7 +1825,7 @@ static void fifo_complete_notify(struct usb_ep *ep,
 
   req_compl = (struct completion *) req->context;
   if (req_compl != NULL) {
-    DBG("Sent request completion notification");
+    DBG(vg, "Sent request completion notification");
     complete(req_compl);
   } else {
     free_page_request(ep, req);
@@ -1893,7 +1894,7 @@ static ssize_t fifo_sendpage (struct file *filp,
 	    DBG(vg, "No more data to send. "
 		"Wait for the request to complete\n");
 	    wait_for_completion(&req_compl);
-	    DBG("Last request finished (%d/%d)\n",
+	    DBG(vg, "Last request finished (%d/%d)\n",
 		req->actual,
 		length);
 	    if (test_bit(FIFO_ERROR, &vg->flags) == 0) {
