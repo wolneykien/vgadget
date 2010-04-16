@@ -416,7 +416,7 @@ static struct vg_dev *the_vg;
 static int main_process(void *context);
 
 /* Starts the main process */
-static int __init vg_main_process_start(struct vg_dev *vg)
+static int vg_main_process_start(struct vg_dev *vg)
 {
   int rc;
 
@@ -424,6 +424,8 @@ static int __init vg_main_process_start(struct vg_dev *vg)
   init_completion(&vg->main_event);
   init_completion(&vg->main_exit);
   DBG(vg, "Start the main process\n");
+  clear_bit(RECONFIGURATION, &vg->flags);
+  clear_bit(INTF_RECONFIGURATION, &vg->flags);
   set_bit(RUNNING, &vg->flags);
   rc = kernel_thread(main_process,
 		     vg,
@@ -451,7 +453,7 @@ static int __exit vg_main_process_terminate(struct vg_dev*vg)
 }
 
 /* Device object allocator/deallocator prototypes */
-static int __init vg_alloc(struct vg_dev **vg);
+static int vg_alloc(struct vg_dev **vg);
 static void vg_free(struct vg_dev *vg);
 
 /* Sets up the console character device */
