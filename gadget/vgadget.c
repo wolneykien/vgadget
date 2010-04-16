@@ -1910,6 +1910,8 @@ static ssize_t fifo_sendpage (struct file *filp,
 	    up(&vg->fifo_wrlim);
 	    DBG(vg, "No more data to send -- flush the EP FIFO\n");
 	    usb_ep_fifo_flush(vg->bulk_in);
+	  } else {
+	    len = length;
 	  }
 	} else {
 	  ERROR(vg, "Unable to enqueue a USB request\n");
