@@ -70,7 +70,7 @@ static struct {
         char            *product_name;
 	char		*serial;
         char            *filename;
-        int             maxwrites;
+        unsigned int    maxwrites;
 } mod_data = {					// Default values
 	.vendor		= DRIVER_VENDOR_ID,
 	.product	= DRIVER_PRODUCT_ID,
@@ -631,12 +631,12 @@ static int vg_alloc(struct vg_dev **vg)
 
 	MDBG("Allocate the gadget device object\n");
 	*vg = kmalloc(sizeof *vg, GFP_KERNEL);
-	if (vg) {
+	if (*vg) {
 	  memset(*vg, 0, sizeof *vg);
 	  (*vg)->req_tag = 0;
 	  (*vg)->flags = 0;
 	  //	  sema_init(&(*vg)->mutex, 1);
-	  INFO((*vg), "Maximum number of buffered FIFO writes: %d\n",
+	  MINFO("Maximum number of buffered FIFO writes: %d\n",
 	       mod_data.maxwrites);
 	  sema_init(&(*vg)->fifo_wrlim, mod_data.maxwrites);
 	  rc = 0;
