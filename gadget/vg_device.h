@@ -47,6 +47,7 @@ struct vg_dev {
         struct completion       main_event;
         struct completion       main_exit;
         struct semaphore        fifo_wrlim;
+        struct semaphore        cmd_read_mutex;
 
         /* Endpoints */
 	struct usb_ep		*ep0;
@@ -56,6 +57,8 @@ struct vg_dev {
 
         /* Character devices */
         struct cdev             cons_dev;
+        struct usb_request      *next_cmd_req;
+        ssize_t                 next_cmd_offs;
         struct cdev             fifo_dev;
 };
 

@@ -96,6 +96,9 @@ static struct {
 /* Endpoint 0 buffer size */
 #define EP0_BUFSIZE 1024
 
+/* Command-status endpoint buffer size */
+#define CONS_BUFSIZE PAGE_SIZE
+
 /* The gadget USB device descriptor */
 static struct usb_device_descriptor
 device_desc = {
@@ -641,6 +644,8 @@ static int vg_alloc(struct vg_dev **vg)
 	  MINFO("Maximum number of buffered FIFO writes: %d\n",
 	       mod_data.maxwrites);
 	  sema_init(&(*vg)->fifo_wrlim, mod_data.maxwrites);
+	  sema_init(&(*vg)->cmd_read_mutex, 1);
+	  (*vg)->next_cmd_req = NULL;
 	  rc = 0;
 	} else {
 	  rc = -ENOMEM;
@@ -1520,6 +1525,39 @@ static int main_process(void *context)
  * Implementation section. Device file operationsn
  */
 
+/* Handles the read-command request completion */
+static void fifo_complete(struct usb_ep *ep, struct usb_request *req)
+{
+  struct vg_dev *vg;
+
+  vg = (struct vg_dev *) ep->driver_data;
+  ep_complete_common(ep, req);
+  DBG(vg, "Send next command available notification\n");
+  vg->next_cmd_offs = 0;
+  up(&vg->cmd_read_mutex);
+}
+
+/* Requests a next command from the host */
+static int request_next_cmd(struct vg_dev *vg)
+{
+  int rc;
+
+  DBG(vg, "Allocate a request for the next command\n");
+  if ((rc = allocate_request(vg->bulk_out,
+			     CONS_BUFSIZE,
+			     &vg->next_cmd_req)) == 0) {
+    DBG(vg, "Enqueue the request for the next command\n");
+    if ((rc = enqueue_request(vg->bulk_out,
+			      vg->next_cmd_req)) != 0) {
+      ERROR(vg, "Unable to enqueue the read-command request\n");
+    }
+  } else {
+    ERROR(vg, "Unable to allocate a read-command request/buffer\n");
+  }
+
+  return rc;
+}
+
 /* Read a command from the host */
 static ssize_t cmd_read (struct file *filp,
 			 char __user *buf,
@@ -1531,7 +1569,39 @@ static ssize_t cmd_read (struct file *filp,
 
   vg = (struct vg_dev *) filp->private_data;
   DBG(vg, "Read command data from the host\n");
-  len = 0; //TODO: implement read
+  len = 0;
+
+  if (down_interruptible(&vg->cmd_read_mutex) == 0) {
+    if (vg->next_cmd_req != NULL) {
+      if (vg->next_cmd_req->status == 0) {
+	len = min(count,
+		  vg->next_cmd_req->actual_length - vg->next_cmd_offs);
+	if ((rc = copy_to_user(buf,
+			       vg->next_cmd_req->actual_length
+			       vg->next_cmd_req->buf + vg->next_cmd_offs,
+			       len)) == 0) {
+	  vg->next_cmd_offs += len;
+	  if (vg->next_cmd_offs == vg->next_cmd_req->actual_length) {
+	    vg->next_cmd_req = NULL;
+	    request_next_cmd(vg);
+	  }
+	} else {
+	  ERROR(vg, "Unable to copy the command data to the user\n");
+	  len = -EFAULT;
+	}
+      } else {
+	ERROR(vg, "Command-read error (%d)\n",
+	      vg->next_cmd_req->status);
+	len = -EFAULT;
+      }
+    } else {
+      ERROR(vg, "Expected the next command in the buffer\n");
+      len = -EFAULT;
+    }
+  } else {
+    ERROR(vg, "Interrupted. Send the system restart signal\n");
+    len = -ERESTARTSYS;
+  }
 
   return len;
 }
@@ -1568,6 +1638,11 @@ static int cons_open (struct inode *inode, struct file *filp)
   DBG(vg, "Open the console device\n");
 
   filp->private_data = vg;
+
+  if (down_trylock(&vg->cmd_read_mutex) == 0) {
+    vg->next_cmd_req = NULL;
+    request_next_cmd(vg);
+  }
 
   return rc;
 }
