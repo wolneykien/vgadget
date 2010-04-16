@@ -657,9 +657,9 @@ static void vg_free(struct vg_dev *vg)
 }
 
 /* Configure the endpoint automatically */
-static int autoconfig_endpoint(struct vg_dev *vg,
-			       struct usb_ep **ep,
-			       struct usb_endpoint_descriptor *desc)
+static __init int autoconfig_endpoint(struct vg_dev *vg,
+				      struct usb_ep **ep,
+				      struct usb_endpoint_descriptor *desc)
 {
   int rc;
   *ep = usb_ep_autoconfig(vg->gadget, desc);
@@ -848,7 +848,7 @@ static void vg_resume(struct usb_gadget *gadget)
 static void ep0_complete(struct usb_ep *ep, struct usb_request *req);
 
 /* Bind procedure implementation */
-static int vg_bind(struct usb_gadget *gadget)
+static __init int vg_bind(struct usb_gadget *gadget)
 {
 	struct vg_dev *vg = the_vg;
 	int rc;
