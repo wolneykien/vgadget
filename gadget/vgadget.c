@@ -34,6 +34,7 @@
 #include <asm/atomic.h>
 #include <linux/mm.h>
 #include <asm/uaccess.h>
+#include <linux/delay.h>
 
 /*
  * Local inclusions
@@ -573,10 +574,6 @@ static int __init vg_init(void)
 	     "USB subsystem\n");
 	wait_for_completion(&the_vg->bind_complete);
 
-	if (rc == 0) {
-	  rc = vg_main_process_start(the_vg);
-	}
-
 	return rc;
 }
 /* Set up the module initialization handler */
@@ -789,7 +786,23 @@ static int enqueue_request(struct usb_ep *ep,
 
   struct vg_dev *vg;
 
+  if (ep == NULL) {
+    MERROR("Error while enqueue request: enpoint is NULL\n");
+    return -EFAULT;
+  }
+
   vg = ep->driver_data;
+
+  if (vg == NULL) {
+    MERROR("Error while enqueue request: device is NULL\n");
+    return -EFAULT;
+  }
+
+  if (req == NULL) {
+    MERROR("Error while enqueue request: request is NULL\n");
+    return -EFAULT;
+  }
+
   DBG(vg, "Enqueue a request of size %d/%d b for endpoint %s\n",
       req->actual,
       req->length,
@@ -817,7 +830,7 @@ static void ep_complete_common(struct usb_ep *ep, struct usb_request *req)
 
   DBG(vg, "Request completed for %s\n", ep->name);
 
-  if (req->status || req->actual < req->length) {
+  if (req->status) {
     WARNING(vg, "Request completed with error: %d %u/%u\n",
 	    req->status, req->actual, req->length);
   }
@@ -958,6 +971,10 @@ static __init int vg_bind(struct usb_gadget *gadget)
 	  /* This should reflect the actual gadget power source */
 	  DBG(vg, "Claim gadget as self-powered\n");
 	  usb_gadget_set_selfpowered(gadget);
+	}
+
+	if (rc == 0) {
+	  rc = vg_main_process_start(the_vg);
 	}
 
 	complete(&vg->bind_complete);
@@ -1551,17 +1568,21 @@ static int request_next_cmd(struct vg_dev *vg)
   int rc;
 
   DBG(vg, "Allocate a request for the next command\n");
-  if ((rc = allocate_request(vg->bulk_out,
-			     CONS_BUFSIZE,
-			     &vg->next_cmd_req)) == 0) {
-    DBG(vg, "Enqueue the request for the next command\n");
-    if ((rc = enqueue_request(vg->bulk_out,
-			      vg->next_cmd_req,
-			      cmdread_complete)) != 0) {
-      ERROR(vg, "Unable to enqueue the read-command request\n");
+  if (vg->next_cmd_req == NULL) {
+    if ((rc = allocate_request(vg->bulk_out,
+			       CONS_BUFSIZE,
+			       &vg->next_cmd_req)) == 0) {
+    } else {
+      ERROR(vg, "Unable to allocate a read-command request/buffer\n");
     }
-  } else {
-    ERROR(vg, "Unable to allocate a read-command request/buffer\n");
+  }
+  vg->next_cmd_req = NULL;
+  vg->next_cmd_offs = 0;
+  DBG(vg, "Enqueue the request for the next command\n");
+  if ((rc = enqueue_request(vg->bulk_out,
+			    vg->next_cmd_req,
+			    cmdread_complete)) != 0) {
+    ERROR(vg, "Unable to enqueue the read-command request\n");
   }
 
   return rc;
@@ -1591,7 +1612,6 @@ static ssize_t cmd_read (struct file *filp,
 			       len)) == 0) {
 	  vg->next_cmd_offs += len;
 	  if (vg->next_cmd_offs == vg->next_cmd_req->actual) {
-	    vg->next_cmd_req = NULL;
 	    request_next_cmd(vg);
 	  }
 	} else {
@@ -1667,6 +1687,9 @@ static int cons_release (struct inode *inode, struct file *filp)
   filp->private_data = NULL;
   if (vg != NULL) {
     DBG(vg, "Release the console device\n");
+    if (vg->next_cmd_req != NULL) {
+      free_request(vg->bulk_out, vg->next_cmd_req);
+    }
   } else {
     MERROR("File private data is NULL\n");
   }
