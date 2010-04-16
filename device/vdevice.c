@@ -236,6 +236,10 @@ static int vdev_open(struct inode *inode, struct file *file)
 /* Accociates the FIFO device on the device class file open */
 static int vfdev_open(struct inode *inode, struct file *file)
 {
+  if (fakeread) {
+    info("Attention! Device in is FAKE read mode. "
+	 "Use only for speed testing");
+  }
   return open_common(inode, file, &vfdev_driver);
 }
 
