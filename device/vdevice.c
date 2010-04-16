@@ -295,7 +295,6 @@ static ssize_t read_common(struct file *file,
 			&bytes_read, timeout);
 
   /* if the read was successful, copy the data to userspace */
-  // TODO: copy via DMA
   if (!retval) {
     if (copy_to_user(buffer, bulk_in_buffer, bytes_read)) {
       retval = -EFAULT;
@@ -388,7 +387,7 @@ static ssize_t cmd_write(struct file *file, const char *user_buffer, size_t coun
 	if (!buf) {
 		return -ENOMEM;
 	}
-	// TODO: transfer via DMA
+
 	if (copy_from_user(buf, user_buffer, writesize)) {
 		return -EFAULT;
 	}
