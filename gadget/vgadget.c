@@ -1855,6 +1855,10 @@ static ssize_t fifo_sendpage (struct file *filp,
     len = -EFAULT;
   }
 
+  if (length == PAGE_SIZE) {
+    more = 1;
+  }
+
   if (vg != NULL) {
     DBG(vg, "Send a page over the USB channel\n");
     DBG(vg, "Allocate a request for page delivery\n");
