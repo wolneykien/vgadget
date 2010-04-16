@@ -38,7 +38,7 @@ int main(int argc, char **argv)
   }
 
   if ((out_fd = open(argv[2], O_WRONLY | O_CREAT | O_TRUNC)) <= 0) {
-    printf("[server] Can not open %s for writing\n", argv[2]);
+    printf("[splice] Can not open %s for writing\n", argv[2]);
   }
 
   if (argc = 5) {
@@ -53,13 +53,13 @@ int main(int argc, char **argv)
   
   if (out_fd > 0) {
     if (pipe(pipe_fds) < 0) {
-      perror("[server] Can not create a pipe\n");
+      perror("[splice] Can not create a pipe\n");
     }
   }
 
   while (cycles < maxcycles) {
     if ((in_fd = open(argv[1], O_RDONLY)) <= 0) {
-      printf("[server] Can not open %s for reading\n", argv[1]);
+      printf("[splice] Can not open %s for reading\n", argv[1]);
     }
 
     total_sent = 0;
@@ -75,7 +75,7 @@ int main(int argc, char **argv)
 			   NULL,
 			   len,
 			   SPLICE_F_MOVE)) < 0) {
-	  perror("[server] Error: unable to splice data from the file");
+	  perror("[splice] Error: unable to splice data from the file");
 	}
       }
 
@@ -86,7 +86,7 @@ int main(int argc, char **argv)
 			   NULL,
 			   sent,
 			   SPLICE_F_MOVE)) < 0) {
-	  perror("[server] Error: unable to splice data to the file");
+	  perror("[splice] Error: unable to splice data to the file");
 	}
       }
       if (sent > 0) {
@@ -102,7 +102,7 @@ int main(int argc, char **argv)
   }
 
   if (all_sent > 0) {
-    printf("[server] Transfer %ld bytes successfully\n", all_sent);
+    printf("[splice] Transfer %ld bytes successfully\n", all_sent);
   }
 
   if (pipe_fds[1] != 0) {
