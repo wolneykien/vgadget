@@ -470,7 +470,7 @@ static int cons_chardev_setup(struct vg_dev *vg)
   cdev_init(&vg->cons_dev, &cons_fops);
   vg->cons_dev.owner = THIS_MODULE;
   vg->cons_dev.ops = &cons_fops;
-  rc = kobject_set_name(&vg->cons_dev.kobj, CONS_FNAME);
+  rc = 0; //kobject_set_name(&vg->cons_dev.kobj, CONS_FNAME);
   //  up(&vg->mutex);
 
   return rc;
@@ -510,7 +510,7 @@ static int fifo_chardev_setup(struct vg_dev *vg)
   cdev_init(&vg->fifo_dev, &fifo_fops);
   vg->fifo_dev.owner = THIS_MODULE;
   vg->fifo_dev.ops = &fifo_fops;
-  rc = kobject_set_name(&vg->fifo_dev.kobj, FIFO_FNAME);
+  rc = 0; //kobject_set_name(&vg->fifo_dev.kobj, FIFO_FNAME);
   //  up(&vg->mutex);
 
   return rc;
@@ -574,6 +574,11 @@ static int __init vg_init(void)
 	     "USB subsystem\n");
 	wait_for_completion(&the_vg->bind_complete);
 
+	if (rc == 0) {
+	  rc = vg_main_process_start(the_vg);
+	}
+
+	MDBG("Module initialization finished (%d)\n", rc);
 	return rc;
 }
 /* Set up the module initialization handler */
@@ -971,10 +976,6 @@ static __init int vg_bind(struct usb_gadget *gadget)
 	  /* This should reflect the actual gadget power source */
 	  DBG(vg, "Claim gadget as self-powered\n");
 	  usb_gadget_set_selfpowered(gadget);
-	}
-
-	if (rc == 0) {
-	  rc = vg_main_process_start(the_vg);
 	}
 
 	complete(&vg->bind_complete);
