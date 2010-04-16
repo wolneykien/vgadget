@@ -208,14 +208,16 @@ static int open_common(struct inode *inode,
 
 	interface = usb_find_interface(driver, subminor);
 	if (!interface) {
-		err ("%s - error, can't find device for minor %d",
-		     __FUNCTION__, subminor);
-		return -ENODEV;
+	  err ("Error open the device: can't find device for minor %d",
+	       subminor);
+	  return -ENODEV;
 	}
 
 	dev = usb_get_intfdata(interface);
 	if (!dev) {
-	        return -ENODEV;
+	  err("Error open the device: no device is associated "
+	      "with the interface");
+	  return -ENODEV;
 	}
 
 	/* increment our usage count for the device */
@@ -364,41 +366,56 @@ static ssize_t cmd_write(struct file *file, const char *user_buffer, size_t coun
 	char *buf = NULL;
 	size_t writesize = min(count, (size_t)MAX_TRANSFER);
 
+	dbg("Process a command-write request");
+
 	dev = (struct usb_vdev *)file->private_data;
 
 	/* verify that we actually have some data to write */
 	if (count == 0) {
+	  dbg("Zero command. Return");
 	  return 0;
 	}
 
 	/* limit the number of URBs in flight to stop a user from using up all RAM */
+	dbg("Turn down the write-limit semaphore");
 	if (down_interruptible(&dev->limit_sem)) {
 		return -ERESTARTSYS;
 	} else {
+	  dbg("Increment the number of sent commands");
 	  atomic_inc(&dev->cmds_sent);
 	}
 	/* create a urb, and a buffer for it, and copy the data to the urb */
+	dbg("Allocate an URB for the command transfer");
 	urb = usb_alloc_urb(0, GFP_KERNEL);
 	if (!urb) {
+	        err("Unable to acllocate an URB for the "
+		    "command transfer");
 		return -ENOMEM;
 	}
 
+	dbg("Allocate a buffer for the command transfer");
 	buf = usb_buffer_alloc(dev->udev, writesize, GFP_KERNEL, &urb->transfer_dma);
 	if (!buf) {
+	        err("Unable to acllocate a buffer for the "
+		    "command transfer");
 		return -ENOMEM;
 	}
 
+	dbg("Copy the command data from the user buffer");
 	if (copy_from_user(buf, user_buffer, writesize)) {
+	        err("Unable to copy the command data");
 		return -EFAULT;
 	}
 
 	/* initialize the urb properly */
+	dbg("Initialize the command URB");
 	usb_fill_bulk_urb(urb, dev->udev,
 			  usb_sndbulkpipe(dev->udev, dev->bulk_out_epaddr),
 			  buf, writesize, vdev_write_bulk_callback, dev);
 	urb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
 
 	/* send the data out the bulk port */
+	dbg("Submit the command URB");
 	retval = usb_submit_urb(urb, GFP_KERNEL);
 	if (retval != 0) {
 		err("%s - failed submitting write urb, error %d", __FUNCTION__, retval);
