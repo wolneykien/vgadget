@@ -802,6 +802,9 @@ static void ep_complete_common(struct usb_ep *ep, struct usb_request *req)
   if (req->status) {
     WARNING(vg, "Request completed with error: %d %u/%u\n",
 	    req->status, req->actual, req->length);
+  } else {
+    DBG(vg, "Request completed: %d %u/%u\n",
+	req->status, req->actual, req->length);
   }
 
   /* Request was cancelled */
