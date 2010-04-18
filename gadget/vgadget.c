@@ -1513,9 +1513,14 @@ static void cmdread_complete(struct usb_ep *ep, struct usb_request *req)
 
   vg = (struct vg_dev *) ep->driver_data;
   ep_complete_common(ep, req);
-  DBG(vg, "Send next command available notification\n");
-  vg->next_cmd_offs = 0;
-  up(&vg->cmd_read_mutex);
+  if (req->actual > 0) {
+    DBG(vg, "Send next command available notification\n");
+    vg->next_cmd_offs = 0;
+    up(&vg->cmd_read_mutex);
+  } else {
+    DBG(vg, "Zero bytes transfered. Re-queue the request\n");
+    enqueue_request(ep, req, cmdread_complete);
+  }
 }
 
 /* Requests a next command from the host */
@@ -1526,6 +1531,7 @@ static int request_next_cmd(struct vg_dev *vg)
   vg->next_cmd_req = NULL;
   vg->next_cmd_offs = 0;
 
+  rc = 0;
   DBG(vg, "Allocate a request for the next command\n");
   if (vg->next_cmd_req == NULL) {
     if ((rc = allocate_request(vg->bulk_out,
