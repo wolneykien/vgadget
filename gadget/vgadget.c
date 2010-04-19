@@ -1644,12 +1644,22 @@ static ssize_t status_write (struct file *filp,
       if ((rc == allocate_request(vg->bulk_status_in,
 				   len,
 				   &req)) == 0) {
+	DBG(vg, "Copy %d b from the user buffer %p to the status "
+	    "request buffer %p\n", len, buf, req->buf);
 	if ((rc = copy_from_user(req->buf, buf, len)) == 0) {
-	  rc = enqueue_request(vg->bulk_status_in,
-			       req,
-			       status_write_complete);
-	  atomic_inc(&vg->statuses_written);
+	  if ((rc = enqueue_request(vg->bulk_status_in,
+				    req,
+				    status_write_complete)) == 0) {
+	    atomic_inc(&vg->statuses_written);
+	  } else {
+	    ERROR(vg, "Unable to enqueue the status request\n");
+	  }
+	} else {
+	  ERROR(vg, "Unable to copy the request data from "
+		"the user buffer\n");
 	}
+      } else {
+	ERROR(vg, "Unable to allocate a request object\n");
       }
       if (rc != 0) {
 	len = rc;
