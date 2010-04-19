@@ -713,6 +713,15 @@ static __init int autoconfig_endpoint(struct vg_dev *vg,
 				      struct usb_endpoint_descriptor *desc)
 {
   int rc;
+
+  if (desc->bEndpointAddress == USB_DIR_IN) {
+    DBG(vg, "Configure an IN endpoint\n");
+  } else if (desc->bEndpointAddress == USB_DIR_OUT) {
+    DBG(vg, "Configure an OUT endpoint\n");
+  } else {
+    DBG(vg, "Configure an endpoint with custom address %d\n",
+	desc->bEndpointAddress);
+  }
   *ep = usb_ep_autoconfig(vg->gadget, desc);
   if (*ep) {
     /* Claim the endpoint */
@@ -947,23 +956,19 @@ static __init int vg_bind(struct usb_gadget *gadget)
 	  /* Find all the endpoints we will use */
 	  DBG(vg, "Endpoint autoconfguration\n");
 	  usb_ep_autoconfig_reset(gadget);
-	  if (fs_bulk_out_desc.bEndpointAddress == USB_DIR_OUT) {
-	    if ((rc = autoconfig_endpoint(vg,
-					  &vg->bulk_out,
-					  &fs_bulk_out_desc)) != 0) {
-	      ERROR(vg, "Bulk-out endpoint autoconfiguration failed\n");
-	    }
+	  if ((rc = autoconfig_endpoint(vg,
+					&vg->bulk_out,
+					&fs_bulk_out_desc)) != 0) {
+	    ERROR(vg, "Bulk-out endpoint autoconfiguration failed\n");
 	  }
-	  if (rc == 0 \
-	      && fs_bulk_in_desc.bEndpointAddress == USB_DIR_IN) {
+	  if (rc == 0) {
 	    if ((rc = autoconfig_endpoint(vg,
 					  &vg->bulk_in,
 					  &fs_bulk_in_desc)) != 0) {
 	      ERROR(vg, "Bulk-in endpoint autoconfiguration failed\n");
 	    }
 	  }
-	  if (rc == 0 \
-	      && fs_bulk_status_in_desc.bEndpointAddress == USB_DIR_IN) {
+	  if (rc == 0) {
 	    if ((rc = autoconfig_endpoint(vg,
 					  &vg->bulk_status_in,
 					  &fs_bulk_status_in_desc)) != 0) {
