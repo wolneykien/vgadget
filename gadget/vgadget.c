@@ -74,6 +74,7 @@ static struct {
 	char		*serial;
         char            *filename;
         unsigned int    maxwrites;
+        unsigned int    config;
 } mod_data = {					// Default values
 	.vendor		= DRIVER_VENDOR_ID,
 	.product	= DRIVER_PRODUCT_ID,
@@ -462,6 +463,9 @@ MODULE_PARM_DESC(serial, "Gadget serial number");
 
 module_param_named(maxwrites, mod_data.maxwrites, uint, S_IRUGO);
 MODULE_PARM_DESC(maxwrites, "Maximal number of buffered writes");
+
+module_param_named(config, mod_data.config, uint, S_IRUGO);
+MODULE_PARM_DESC(config, "The device configuration number");
 
 /* The gadget device object */
 static struct vg_dev *the_vg;
