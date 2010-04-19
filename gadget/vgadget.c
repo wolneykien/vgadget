@@ -35,6 +35,7 @@
 #include <linux/mm.h>
 #include <asm/uaccess.h>
 #include <linux/delay.h>
+#include <linux/poll.h>
 
 /*
  * Local inclusions
@@ -360,12 +361,15 @@ vg_driver = {
 static ssize_t cmd_read (struct file *, char __user *, size_t, loff_t *);
 static ssize_t status_write (struct file *, const char __user *, size_t,
 			     loff_t *);
+static unsigned int cons_poll(struct file *filp,
+			      struct poll_table_struct *wait);
 static int cons_open (struct inode *, struct file *);
 static int cons_release (struct inode *, struct file *);
 static struct file_operations cons_fops = {
 	.owner		= THIS_MODULE,
 	.read           = cmd_read,
 	.write          = status_write,
+	.poll           = cons_poll,
 	.open		= cons_open,
 	.release	= cons_release,
 };
@@ -616,7 +620,10 @@ static int vg_alloc(struct vg_dev **vg)
 	  MINFO("Maximum number of buffered FIFO writes: %d\n",
 	       mod_data.maxwrites);
 	  sema_init(&(*vg)->fifo_wrlim, mod_data.maxwrites);
+	  sema_init(&(*vg)->status_wrlim, mod_data.maxwrites);
 	  sema_init(&(*vg)->cmd_read_mutex, 1);
+	  atomic_set(&(*vg)->statuses_written, 0);
+	  init_waitqueue_head(&(*vg)->cons_wait);
 	  (*vg)->next_cmd_req = NULL;
 	  rc = 0;
 	} else {
@@ -1517,6 +1524,7 @@ static void cmdread_complete(struct usb_ep *ep, struct usb_request *req)
     DBG(vg, "Send next command available notification\n");
     vg->next_cmd_offs = 0;
     up(&vg->cmd_read_mutex);
+    wake_up(&vg->cons_wait);
   } else {
     DBG(vg, "Zero bytes transfered. Re-queue the request\n");
     enqueue_request(ep, req, cmdread_complete);
@@ -1600,6 +1608,21 @@ static ssize_t cmd_read (struct file *filp,
   return len;
 }
 
+/* Handles the finished status write request */
+static void status_write_complete(struct usb_ep *ep,
+				  struct usb_request *req)
+{
+  struct vg_dev *vg;
+
+  vg = (struct vg_dev *) ep->driver_data;
+
+  ep_complete_common(ep, req);
+  free_request(ep, req);
+  atomic_dec(&vg->statuses_written);
+  up(&vg->status_wrlim);
+  wake_up(&vg->cons_wait);
+}
+
 /* Read a given status data to the host */
 static ssize_t status_write (struct file *filp,
 			     const char __user *buf,
@@ -1612,7 +1635,28 @@ static ssize_t status_write (struct file *filp,
   vg = (struct vg_dev *) filp->private_data;
   if (vg != NULL) {
     DBG(vg, "Write status data to the host\n");
-    len = 0; //TODO: implement write
+    if (down_interruptible(&vg->status_wrlim) == 0) {
+      struct usb_request *req;
+      int rc;
+
+      rc = 0;
+      len = min_t(size_t, count, CONS_BUFSIZE);
+      if ((rc == allocate_request(vg->bulk_status_in,
+				   len,
+				   &req)) == 0) {
+	if ((rc = copy_from_user(req->buf, buf, len)) == 0) {
+	  rc = enqueue_request(vg->bulk_status_in,
+			       req,
+			       status_write_complete);
+	  atomic_inc(&vg->statuses_written);
+	}
+      }
+      if (rc != 0) {
+	len = rc;
+      }
+    } else {
+      len = -ERESTARTSYS;
+    }
   } else {
     MERROR("File private data is NULL\n");
     len = -EFAULT;
@@ -1657,6 +1701,36 @@ static int cons_release (struct inode *inode, struct file *filp)
     }
   } else {
     MERROR("File private data is NULL\n");
+  }
+
+  return rc;
+}
+
+
+/* Returns a bit mask indicating the current non-blocking
+ * operations that are available for the CS device */
+static unsigned int cons_poll(struct file *filp,
+			      struct poll_table_struct *wait)
+{
+  struct vg_dev *vg;
+  int rc;
+
+  vg = (struct vg_dev *)filp->private_data;
+
+  rc = 0;
+  if (down_trylock(&vg->cmd_read_mutex) == 0) {
+    if (vg->next_cmd_req != NULL) {
+      /* Indicate that the next command data is ready */
+      rc |= (POLLIN | POLLRDNORM);
+    }
+    up(&vg->cmd_read_mutex);
+  }
+  if (atomic_read(&vg->statuses_written) < mod_data.maxwrites) {
+    /* Indicate that the write limit isn't exceeded */
+    rc |= (POLLOUT | POLLWRNORM);
+  } else {
+    /* Add the command wait-queue to the poll table */
+    poll_wait(filp, &vg->cons_wait, wait);
   }
 
   return rc;

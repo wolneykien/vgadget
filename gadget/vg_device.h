@@ -48,6 +48,9 @@ struct vg_dev {
         struct completion       main_exit;
         struct completion       bind_complete;
         struct semaphore        fifo_wrlim;
+        struct semaphore        status_wrlim;
+        atomic_t                statuses_written;
+        wait_queue_head_t       cons_wait;
         struct semaphore        cmd_read_mutex;
 
         /* Endpoints */
