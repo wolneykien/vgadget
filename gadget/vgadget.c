@@ -1637,7 +1637,7 @@ static void cmdread_complete(struct usb_ep *ep, struct usb_request *req)
     vg->next_cmd_offs = 0;
     up(&vg->cmd_read_mutex);
     wake_up(&vg->cons_wait);
-  } else {
+  } else if (req->status == 0) {
     DBG(vg, "Zero bytes transfered. Re-queue the request\n");
     enqueue_request(ep, req, cmdread_complete);
   }
