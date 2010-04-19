@@ -33,6 +33,9 @@
 #include <asm/bitops.h>
 #include <asm/atomic.h>
 #include <linux/mm.h>
+#include <asm/uaccess.h>
+#include <linux/delay.h>
+#include <linux/poll.h>
 
 /*
  * Local inclusions
@@ -69,10 +72,13 @@ static struct {
         char            *vendor_name;
         char            *product_name;
 	char		*serial;
-        char            *filename;
+        unsigned int    maxwrites;
+        unsigned int    config;
 } mod_data = {					// Default values
 	.vendor		= DRIVER_VENDOR_ID,
 	.product	= DRIVER_PRODUCT_ID,
+	.maxwrites      = 16,
+	.config         = 0 // Host-configured
 };
 
 /* Bulk-only class specific requests */
@@ -88,11 +94,14 @@ static struct {
 #define STRING_SERIAL		3
 #define STRING_CONFIG		4
 
-/* There is only one configuration. */
-#define	NUMBER_OF_CONFIGS	1
-
 /* Endpoint 0 buffer size */
 #define EP0_BUFSIZE 1024
+
+/* Command-status endpoint buffer size */
+#define CONS_BUFSIZE PAGE_SIZE
+
+/* Number of device configurations */
+#define NUMBER_OF_CONFIGS       2
 
 /* The gadget USB device descriptor */
 static struct usb_device_descriptor
@@ -111,7 +120,7 @@ device_desc = {
 	.iManufacturer =	STRING_MANUFACTURER,
 	.iProduct =		STRING_PRODUCT,
 	.iSerialNumber =	STRING_SERIAL,
-	.bNumConfigurations =	1,
+	.bNumConfigurations =	NUMBER_OF_CONFIGS,
 };
 
 /* The gadget USB configuration descriptor */
@@ -123,6 +132,19 @@ config_desc = {
 	/* wTotalLength computed by usb_gadget_config_buf() */
 	.bNumInterfaces =	2,
 	.bConfigurationValue =	1,
+	.bmAttributes =		USB_CONFIG_ATT_ONE | USB_CONFIG_ATT_SELFPOWER,
+	.bMaxPower =		1,	// self-powered
+};
+
+/* Second configuration descriptor */
+static struct usb_config_descriptor
+stk_config_desc = {
+	.bLength =		sizeof config_desc,
+	.bDescriptorType =	USB_DT_CONFIG,
+
+	/* wTotalLength computed by usb_gadget_config_buf() */
+	.bNumInterfaces =	1,
+	.bConfigurationValue =	2,
 	.bmAttributes =		USB_CONFIG_ATT_ONE | USB_CONFIG_ATT_SELFPOWER,
 	.bMaxPower =		1,	// self-powered
 };
@@ -166,6 +188,21 @@ fifo_intf_desc = {
 	.bInterfaceSubClass =	USB_PR_BULK,
 	.bInterfaceProtocol =	USB_PR_BULK,
 };
+
+/* The gadget CS-FIFO sticked USB interface descritor */
+static struct usb_interface_descriptor
+stk_intf_desc = {
+	.bLength =		sizeof cs_intf_desc,
+	.bDescriptorType =	USB_DT_INTERFACE,
+
+	/* The interface number 0 */
+	.bInterfaceNumber =     0,
+	.bNumEndpoints =	3,
+	.bInterfaceClass =	USB_CLASS_VENDOR_SPEC,
+	.bInterfaceSubClass =	USB_PR_BULK,
+	.bInterfaceProtocol =	USB_PR_BULK,
+};
+
 
 /* String descriptors */
 static char manufacturer[32] = "N/A";
@@ -223,13 +260,23 @@ fs_bulk_status_in_desc = {
 };
 
 
-/* The set of full-speed endpoint descriptors */
+/* The set of full-speed descriptors for configuration #1 */
 static const struct usb_descriptor_header *fs_function[] = {
 	(struct usb_descriptor_header *) &otg_desc,
 	(struct usb_descriptor_header *) &cs_intf_desc,
 	(struct usb_descriptor_header *) &fs_bulk_out_desc,
 	(struct usb_descriptor_header *) &fs_bulk_status_in_desc,
 	(struct usb_descriptor_header *) &fifo_intf_desc,
+	(struct usb_descriptor_header *) &fs_bulk_in_desc,
+	NULL
+};
+
+/* The set of full-speed descriptors for configuration #2 */
+static const struct usb_descriptor_header *fs_stk_function[] = {
+	(struct usb_descriptor_header *) &otg_desc,
+	(struct usb_descriptor_header *) &stk_intf_desc,
+	(struct usb_descriptor_header *) &fs_bulk_out_desc,
+	(struct usb_descriptor_header *) &fs_bulk_status_in_desc,
 	(struct usb_descriptor_header *) &fs_bulk_in_desc,
 	NULL
 };
@@ -252,7 +299,7 @@ dev_qualifier = {
 	.bcdUSB =		__constant_cpu_to_le16(0x0200),
 	.bDeviceClass =		USB_CLASS_PER_INTERFACE,
 
-	.bNumConfigurations =	1,
+	.bNumConfigurations =	NUMBER_OF_CONFIGS,
 };
 
 /* The addresses of the following endpoints are set from the corresponding
@@ -286,13 +333,23 @@ hs_bulk_status_in_desc = {
 	.wMaxPacketSize =	__constant_cpu_to_le16(MAX_PACKET_SIZE),
 };
 
-/* The set of high-speed endpoint descriptors */
+/* The set of high-speed descriptors for configuration #1 */
 static const struct usb_descriptor_header *hs_function[] = {
 	(struct usb_descriptor_header *) &otg_desc,
 	(struct usb_descriptor_header *) &cs_intf_desc,
 	(struct usb_descriptor_header *) &hs_bulk_out_desc,
 	(struct usb_descriptor_header *) &hs_bulk_status_in_desc,
 	(struct usb_descriptor_header *) &fifo_intf_desc,
+	(struct usb_descriptor_header *) &hs_bulk_in_desc,
+	NULL
+};
+
+/* The set of high-speed descriptors for configuration #2 */
+static const struct usb_descriptor_header *hs_stk_function[] = {
+	(struct usb_descriptor_header *) &otg_desc,
+	(struct usb_descriptor_header *) &stk_intf_desc,
+	(struct usb_descriptor_header *) &hs_bulk_out_desc,
+	(struct usb_descriptor_header *) &hs_bulk_status_in_desc,
 	(struct usb_descriptor_header *) &hs_bulk_in_desc,
 	NULL
 };
@@ -353,12 +410,15 @@ vg_driver = {
 static ssize_t cmd_read (struct file *, char __user *, size_t, loff_t *);
 static ssize_t status_write (struct file *, const char __user *, size_t,
 			     loff_t *);
+static unsigned int cons_poll(struct file *filp,
+			      struct poll_table_struct *wait);
 static int cons_open (struct inode *, struct file *);
 static int cons_release (struct inode *, struct file *);
 static struct file_operations cons_fops = {
 	.owner		= THIS_MODULE,
 	.read           = cmd_read,
 	.write          = status_write,
+	.poll           = cons_poll,
 	.open		= cons_open,
 	.release	= cons_release,
 };
@@ -404,6 +464,27 @@ MODULE_PARM_DESC(product_name, "Product name");
 module_param_named(serial, mod_data.serial, charp, S_IRUGO);
 MODULE_PARM_DESC(serial, "Gadget serial number");
 
+module_param_named(maxwrites, mod_data.maxwrites, uint, S_IRUGO);
+MODULE_PARM_DESC(maxwrites, "Maximal number of buffered writes");
+
+module_param_named(config, mod_data.config, uint, S_IRUGO);
+MODULE_PARM_DESC(config, "Optionally set the device configuration number");
+
+module_param_named(cmd_addr, fs_bulk_out_desc.bEndpointAddress,
+		   byte, S_IRUGO);
+MODULE_PARM_DESC(cmd_addr, "Optionally set the address of the command "
+		 "endpoint (OUT)");
+
+module_param_named(status_addr, fs_bulk_status_in_desc.bEndpointAddress,
+		   byte, S_IRUGO);
+MODULE_PARM_DESC(status_addr, "Optionally set the address of the status "
+		 "endpoint (IN)");
+
+module_param_named(fifo_addr, fs_bulk_in_desc.bEndpointAddress,
+		   byte, S_IRUGO);
+MODULE_PARM_DESC(fifo_addr, "Optionally set the address of the FIFO "
+		 "endpoint (IN)");
+
 /* The gadget device object */
 static struct vg_dev *the_vg;
 
@@ -411,7 +492,7 @@ static struct vg_dev *the_vg;
 static int main_process(void *context);
 
 /* Starts the main process */
-static int __init vg_main_process_start(struct vg_dev *vg)
+static int vg_main_process_start(struct vg_dev *vg)
 {
   int rc;
 
@@ -419,6 +500,8 @@ static int __init vg_main_process_start(struct vg_dev *vg)
   init_completion(&vg->main_event);
   init_completion(&vg->main_exit);
   DBG(vg, "Start the main process\n");
+  clear_bit(RECONFIGURATION, &vg->flags);
+  clear_bit(INTF_RECONFIGURATION, &vg->flags);
   set_bit(RUNNING, &vg->flags);
   rc = kernel_thread(main_process,
 		     vg,
@@ -446,40 +529,22 @@ static int __exit vg_main_process_terminate(struct vg_dev*vg)
 }
 
 /* Device object allocator/deallocator prototypes */
-static int __init vg_alloc(struct vg_dev **vg);
+static int vg_alloc(struct vg_dev **vg);
 static void vg_free(struct vg_dev *vg);
-
-/* Sets up the console character device */
-static int cons_chardev_setup(struct vg_dev *vg)
-{
-  int rc;
-
-  //  down(&vg->mutex);
-  cdev_init(&vg->cons_dev, &cons_fops);
-  vg->cons_dev.owner = THIS_MODULE;
-  vg->cons_dev.ops = &cons_fops;
-  rc = kobject_set_name(&vg->cons_dev.kobj, CONS_FNAME);
-  //  up(&vg->mutex);
-
-  return rc;
-}
 
 /* Registers the console character device */
 static int cons_chardev_add(struct vg_dev *vg)
 {
-  int cdevno;
   int rc;
 
   //  down(&vg->mutex);
   if ((rc = test_and_set_bit(CONS_REGISTERED, &vg->flags)) == 0) {
     MDBG("Register the console device\n");
-    cdevno = MKDEV(CONS_MAJOR, 0);
+    //    MKDEV(CONS_MAJOR, 0);
 
-    if (vg->cons_dev.kobj.name == NULL) {
-      rc = kobject_set_name(&vg->cons_dev.kobj, CONS_FNAME);
-    }
-
-    if ((rc = cdev_add(&vg->cons_dev, cdevno, 1)) != 0) {
+    if ((rc = register_chrdev(CONS_MAJOR,
+			      CONS_FNAME,
+			      &cons_fops)) != 0) {
       MERROR("Unable to register the console device\n");
       clear_bit(CONS_REGISTERED, &vg->flags);
     }
@@ -489,37 +554,19 @@ static int cons_chardev_add(struct vg_dev *vg)
   return rc;
 }
 
-/* Sets up the FIFO character device */
-static int fifo_chardev_setup(struct vg_dev *vg)
-{
-  int rc;
-
-  //  down(&vg->mutex);
-  cdev_init(&vg->fifo_dev, &fifo_fops);
-  vg->fifo_dev.owner = THIS_MODULE;
-  vg->fifo_dev.ops = &fifo_fops;
-  rc = kobject_set_name(&vg->fifo_dev.kobj, FIFO_FNAME);
-  //  up(&vg->mutex);
-
-  return rc;
-}
-
 /* Registers the FIFO character device */
 static int fifo_chardev_add(struct vg_dev *vg)
 {
   int rc;
-  int fdevno;
 
   //  down(&vg->mutex);
   if ((rc = test_and_set_bit(FIFO_REGISTERED, &vg->flags)) == 0) {
     MDBG("Register the FIFO device\n");
-    fdevno = MKDEV(FIFO_MAJOR, 0);
+    //    MKDEV(FIFO_MAJOR, 0);
 
-    if (vg->fifo_dev.kobj.name == NULL) {
-      rc = kobject_set_name(&vg->fifo_dev.kobj, FIFO_FNAME);
-    }
-
-    if ((rc = cdev_add(&vg->fifo_dev, fdevno, 1)) != 0) {
+    if ((rc = register_chrdev(FIFO_MAJOR,
+			      FIFO_FNAME,
+			      &fifo_fops)) != 0) {
       MERROR("Unable to register the FIFO device\n");
       clear_bit(FIFO_REGISTERED, &vg->flags);
     }
@@ -544,6 +591,7 @@ static int __init vg_init(void)
 
 	MDBG("Allocate the gadget device\n");
 	rc = vg_alloc(&the_vg);
+	init_completion(&the_vg->bind_complete);
 	if (rc == 0) {
 	  MDBG("Register the gadget device driver\n");
 	  rc = usb_gadget_register_driver(&vg_driver);
@@ -557,10 +605,15 @@ static int __init vg_init(void)
 	  MERROR("Unable to allocate the gadget device object\n");
 	}
 
+	MDBG("Wait for the gadget device to bind to the "
+	     "USB subsystem\n");
+	wait_for_completion(&the_vg->bind_complete);
+
 	if (rc == 0) {
 	  rc = vg_main_process_start(the_vg);
 	}
 
+	MDBG("Module initialization finished (%d)\n", rc);
 	return rc;
 }
 /* Set up the module initialization handler */
@@ -571,8 +624,8 @@ static void cons_chardev_remove(struct vg_dev *vg)
 {
   //  down(&vg->mutex);
   if (test_and_clear_bit(CONS_REGISTERED, &vg->flags)) {
-    MDBG("Unregister the console device %s\n", vg->cons_dev.kobj.name);
-    cdev_del(&vg->cons_dev);
+    MDBG("Unregister the console device\n");
+    unregister_chrdev(CONS_MAJOR, CONS_FNAME);
   }
   //  up(&vg->mutex);
 }
@@ -582,8 +635,8 @@ static void fifo_chardev_remove(struct vg_dev *vg)
 {
   //  down(&vg->mutex);
   if (test_and_clear_bit(FIFO_REGISTERED, &vg->flags)) {
-    MDBG("Unregister the FIFO device %s\n", vg->fifo_dev.kobj.name);
-    cdev_del(&vg->fifo_dev);
+    MDBG("Unregister the FIFO device\n");
+    unregister_chrdev(FIFO_MAJOR, FIFO_FNAME);
   }
   //  up(&vg->mutex);
 }
@@ -620,17 +673,25 @@ module_exit(vg_cleanup);
  */
 
 /* Allocates memory and scheduler objects used by this module */
-static int __init vg_alloc(struct vg_dev **vg)
+static int vg_alloc(struct vg_dev **vg)
 {
         int rc;
 
 	MDBG("Allocate the gadget device object\n");
 	*vg = kmalloc(sizeof *vg, GFP_KERNEL);
-	if (vg) {
+	if (*vg) {
 	  memset(*vg, 0, sizeof *vg);
 	  (*vg)->req_tag = 0;
 	  (*vg)->flags = 0;
 	  //	  sema_init(&(*vg)->mutex, 1);
+	  MINFO("Maximum number of buffered FIFO writes: %d\n",
+	       mod_data.maxwrites);
+	  sema_init(&(*vg)->fifo_wrlim, mod_data.maxwrites);
+	  sema_init(&(*vg)->status_wrlim, mod_data.maxwrites);
+	  sema_init(&(*vg)->cmd_read_mutex, 1);
+	  atomic_set(&(*vg)->statuses_written, 0);
+	  init_waitqueue_head(&(*vg)->cons_wait);
+	  (*vg)->next_cmd_req = NULL;
 	  rc = 0;
 	} else {
 	  rc = -ENOMEM;
@@ -647,11 +708,20 @@ static void vg_free(struct vg_dev *vg)
 }
 
 /* Configure the endpoint automatically */
-static int autoconfig_endpoint(struct vg_dev *vg,
-			       struct usb_ep **ep,
-			       struct usb_endpoint_descriptor *desc)
+static __init int autoconfig_endpoint(struct vg_dev *vg,
+				      struct usb_ep **ep,
+				      struct usb_endpoint_descriptor *desc)
 {
   int rc;
+
+  if (desc->bEndpointAddress == USB_DIR_IN) {
+    DBG(vg, "Configure an IN endpoint\n");
+  } else if (desc->bEndpointAddress == USB_DIR_OUT) {
+    DBG(vg, "Configure an OUT endpoint\n");
+  } else {
+    DBG(vg, "Configure an endpoint with custom address %d\n",
+	desc->bEndpointAddress);
+  }
   *ep = usb_ep_autoconfig(vg->gadget, desc);
   if (*ep) {
     /* Claim the endpoint */
@@ -768,7 +838,23 @@ static int enqueue_request(struct usb_ep *ep,
 
   struct vg_dev *vg;
 
+  if (ep == NULL) {
+    MERROR("Error while enqueue request: enpoint is NULL\n");
+    return -EFAULT;
+  }
+
   vg = ep->driver_data;
+
+  if (vg == NULL) {
+    MERROR("Error while enqueue request: device is NULL\n");
+    return -EFAULT;
+  }
+
+  if (req == NULL) {
+    MERROR("Error while enqueue request: request is NULL\n");
+    return -EFAULT;
+  }
+
   DBG(vg, "Enqueue a request of size %d/%d b for endpoint %s\n",
       req->actual,
       req->length,
@@ -796,9 +882,12 @@ static void ep_complete_common(struct usb_ep *ep, struct usb_request *req)
 
   DBG(vg, "Request completed for %s\n", ep->name);
 
-  if (req->status || req->actual < req->length) {
+  if (req->status) {
     WARNING(vg, "Request completed with error: %d %u/%u\n",
 	    req->status, req->actual, req->length);
+  } else {
+    DBG(vg, "Request completed: %d %u/%u\n",
+	req->status, req->actual, req->length);
   }
 
   /* Request was cancelled */
@@ -838,28 +927,16 @@ static void vg_resume(struct usb_gadget *gadget)
 static void ep0_complete(struct usb_ep *ep, struct usb_request *req);
 
 /* Bind procedure implementation */
-static int vg_bind(struct usb_gadget *gadget)
+static __init int vg_bind(struct usb_gadget *gadget)
 {
 	struct vg_dev *vg = the_vg;
 	int rc;
 
+	rc = 0;
 	vg->gadget = gadget;
 	set_gadget_data(gadget, vg);
 	vg->ep0 = gadget->ep0;
 	vg->ep0->driver_data = vg;
-
-	/* Initialize the character devices */
-	MDBG("Initialize the character devices\n");
-	if ((rc = cons_chardev_setup(vg)) != 0) {
-	  MERROR("Unable to allocate memory on the console "
-	       "device setup\n");
-	}
-	if (rc == 0) {
-	  if ((rc = fifo_chardev_setup(vg)) != 0) {
-	    MERROR("Unable to allocate memory on the FIFO "
-		   "device setup\n");
-	  }
-	}
 
 	if (rc == 0) {
 	  MDBG("Allocate the DMA pool\n");
@@ -907,6 +984,11 @@ static int vg_bind(struct usb_gadget *gadget)
 	  device_desc.idVendor = cpu_to_le16(mod_data.vendor);
 	  device_desc.idProduct = cpu_to_le16(mod_data.product);
 	  device_desc.bcdDevice = cpu_to_le16(mod_data.release);
+	  if (mod_data.config > 0) {
+	    device_desc.bNumConfigurations = 1;
+	  }
+	  dev_qualifier.bNumConfigurations =
+	    device_desc.bNumConfigurations;
 	}
 
 #ifdef CONFIG_USB_GADGET_DUALSPEED
@@ -938,6 +1020,8 @@ static int vg_bind(struct usb_gadget *gadget)
 	  DBG(vg, "Claim gadget as self-powered\n");
 	  usb_gadget_set_selfpowered(gadget);
 	}
+
+	complete(&vg->bind_complete);
 
 	return rc;
 }
@@ -1046,8 +1130,15 @@ static int populate_config_buf(struct usb_gadget *gadget,
         struct vg_dev *vg = get_gadget_data(gadget);
 	int len;
 	const struct usb_descriptor_header **function;
+	struct usb_config_descriptor *conf_desc;
 
-	if (index > 0) {
+	if (mod_data.config > 0) {
+	  VDBG(vg, "Select the configuration #%d from the module "
+	       "parameter\n", mod_data.config);
+	  index = mod_data.config - 1;
+	}
+
+	if (index > device_desc.bNumConfigurations) {
 	  ERROR(vg, "Configuration number out of rage (%d)\n", index);
 	  return -EINVAL;
 	}
@@ -1058,10 +1149,18 @@ static int populate_config_buf(struct usb_gadget *gadget,
 	    || (type != USB_DT_OTHER_SPEED_CONFIG			\
 		&& gadget->speed == USB_SPEED_HIGH)) {
 	  DBG(vg, "Configure with high-speed functions\n");
-	  function = hs_function;
+	  if (index == 0) {
+	    function = hs_function;
+	  } else {
+	    function = hs_stk_function;
+	  }
 	} else {
 	  DBG(vg, "Configure with full-speed functions\n");
-	  function = fs_function;
+	  if (index == 0) {
+	    function = fs_function;
+	  } else {
+	    function = fs_stk_function;
+	  }
 	}
 #else
 	DBG(vg, "Configure with full-speed functions (default)\n");
@@ -1072,7 +1171,12 @@ static int populate_config_buf(struct usb_gadget *gadget,
 	if (!gadget->is_otg)
 		function++;
 
-	len = usb_gadget_config_buf(&config_desc, buf, EP0_BUFSIZE, function);
+	if (index == 0) {
+	  conf_desc = &config_desc;
+	} else {
+	  conf_desc = &stk_config_desc;
+	}
+	len = usb_gadget_config_buf(conf_desc, buf, EP0_BUFSIZE, function);
 	((struct usb_config_descriptor *) buf)->bDescriptorType = type;
 	return len;
 }
@@ -1106,6 +1210,8 @@ static int standard_setup_req(struct vg_dev *vg,
 			allocate_request(vg->ep0, EP0_BUFSIZE, res_req);
 			memcpy((*res_req)->buf, &device_desc, value);
 			set_request_length(*res_req, value);
+			DBG(vg, "Number of device configurations: %d\n",
+			    device_desc.bNumConfigurations);
 			break;
 #ifdef CONFIG_USB_GADGET_DUALSPEED
 		case USB_DT_DEVICE_QUALIFIER:
@@ -1156,8 +1262,14 @@ static int standard_setup_req(struct vg_dev *vg,
 		if (ctrl->bRequestType != (USB_DIR_OUT | USB_TYPE_STANDARD |
 				USB_RECIP_DEVICE))
 			break;
-		if (wValue <= NUMBER_OF_CONFIGS) {
+		if ((mod_data.config > 0 && wValue == mod_data.config) \
+		    || wValue <= device_desc.bNumConfigurations) {
 		  value = vg_request_reconf(vg, wValue);
+		} else {
+		  ERROR(vg, "Configuration value %d is out "
+			"of range (%d)\n",
+			wValue,
+			device_desc.bNumConfigurations);
 		}
 		break;
 	case USB_REQ_GET_CONFIGURATION:
@@ -1391,6 +1503,9 @@ static int do_set_interface(struct vg_dev *vg,
   switch (index) {
   case 0:
     rc = do_set_cmd_interface(vg, altsetting);
+    if (vg->config == 2) {
+      rc |= do_set_fifo_interface(vg, altsetting);
+    }
     break;
   case 1:
     rc = do_set_fifo_interface(vg, altsetting);
@@ -1510,20 +1625,116 @@ static int main_process(void *context)
  * Implementation section. Device file operationsn
  */
 
+/* Handles the read-command request completion */
+static void cmdread_complete(struct usb_ep *ep, struct usb_request *req)
+{
+  struct vg_dev *vg;
+
+  vg = (struct vg_dev *) ep->driver_data;
+  ep_complete_common(ep, req);
+  if (req->actual > 0) {
+    DBG(vg, "Send next command available notification\n");
+    vg->next_cmd_offs = 0;
+    up(&vg->cmd_read_mutex);
+    wake_up(&vg->cons_wait);
+  } else if (req->status == 0) {
+    DBG(vg, "Zero bytes transfered. Re-queue the request\n");
+    enqueue_request(ep, req, cmdread_complete);
+  }
+}
+
+/* Requests a next command from the host */
+static int request_next_cmd(struct vg_dev *vg)
+{
+  int rc;
+
+  if (vg->next_cmd_req != NULL) {
+    usb_ep_dequeue(vg->bulk_out, vg->next_cmd_req);
+    free_request(vg->bulk_out, vg->next_cmd_req);
+    vg->next_cmd_req = NULL;
+  }
+  vg->next_cmd_offs = 0;
+
+  rc = 0;
+  DBG(vg, "Allocate a request for the next command\n");
+  if ((rc = allocate_request(vg->bulk_out,
+			     CONS_BUFSIZE,
+			     &vg->next_cmd_req)) != 0) {
+    ERROR(vg, "Unable to allocate a read-command request/buffer\n");
+  }
+
+  if (rc == 0) {
+    DBG(vg, "Enqueue the request for the next command\n");
+    if ((rc = enqueue_request(vg->bulk_out,
+			      vg->next_cmd_req,
+			      cmdread_complete)) != 0) {
+      ERROR(vg, "Unable to enqueue the read-command request\n");
+    }
+  }
+
+  return rc;
+}
+
 /* Read a command from the host */
 static ssize_t cmd_read (struct file *filp,
 			 char __user *buf,
 			 size_t count,
 			 loff_t *offp)
 {
+  int rc;
   ssize_t len;
   struct vg_dev *vg;
 
   vg = (struct vg_dev *) filp->private_data;
   DBG(vg, "Read command data from the host\n");
-  len = 0; //TODO: implement read
+  len = 0;
+
+  if (down_interruptible(&vg->cmd_read_mutex) == 0) {
+    if (vg->next_cmd_req != NULL) {
+      if (vg->next_cmd_req->status == 0) {
+	len = min(count,
+		  vg->next_cmd_req->actual - vg->next_cmd_offs);
+	if ((rc = copy_to_user(buf,			       
+			       vg->next_cmd_req->buf + vg->next_cmd_offs,
+			       len)) == 0) {
+	  vg->next_cmd_offs += len;
+	  if (vg->next_cmd_offs == vg->next_cmd_req->actual) {
+	    request_next_cmd(vg);
+	  }
+	} else {
+	  ERROR(vg, "Unable to copy the command data to the user\n");
+	  len = rc;
+	}
+      } else {
+	ERROR(vg, "Command-read error (%d)\n",
+	      vg->next_cmd_req->status);
+	len = -EFAULT;
+      }
+    } else {
+      ERROR(vg, "Expected the next command in the buffer\n");
+      len = -EFAULT;
+    }
+  } else {
+    ERROR(vg, "Interrupted. Send the system restart signal\n");
+    len = -ERESTARTSYS;
+  }
 
   return len;
+}
+
+/* Handles the finished status write request */
+static void status_write_complete(struct usb_ep *ep,
+				  struct usb_request *req)
+{
+  struct vg_dev *vg;
+
+  vg = (struct vg_dev *) ep->driver_data;
+
+  ep_complete_common(ep, req);
+  free_request(ep, req);
+  atomic_dec(&vg->statuses_written);
+  up(&vg->status_wrlim);
+  wake_up(&vg->cons_wait);
 }
 
 /* Read a given status data to the host */
@@ -1538,7 +1749,37 @@ static ssize_t status_write (struct file *filp,
   vg = (struct vg_dev *) filp->private_data;
   if (vg != NULL) {
     DBG(vg, "Write status data to the host\n");
-    len = 0; //TODO: implement write
+    if (down_interruptible(&vg->status_wrlim) == 0) {
+      struct usb_request *req;
+      int rc;
+
+      len = min_t(size_t, count, CONS_BUFSIZE);
+      if ((rc = allocate_request(vg->bulk_status_in,
+				   len,
+				   &req)) == 0) {
+	DBG(vg, "Copy %d b from the user buffer %p to the status "
+	    "request buffer %p\n", len, buf, req->buf);
+	if ((rc = copy_from_user(req->buf, buf, len)) == 0) {
+	  if ((rc = enqueue_request(vg->bulk_status_in,
+				    req,
+				    status_write_complete)) == 0) {
+	    atomic_inc(&vg->statuses_written);
+	  } else {
+	    ERROR(vg, "Unable to enqueue the status request\n");
+	  }
+	} else {
+	  ERROR(vg, "Unable to copy the request data from "
+		"the user buffer\n");
+	}
+      } else {
+	ERROR(vg, "Unable to allocate a request object\n");
+      }
+      if (rc != 0) {
+	len = rc;
+      }
+    } else {
+      len = -ERESTARTSYS;
+    }
   } else {
     MERROR("File private data is NULL\n");
     len = -EFAULT;
@@ -1554,16 +1795,21 @@ static int cons_open (struct inode *inode, struct file *filp)
   int rc;
 
   rc = 0;
-  vg = container_of(inode->i_cdev, struct vg_dev, cons_dev);
+  vg = the_vg;
   DBG(vg, "Open the console device\n");
 
   filp->private_data = vg;
+
+  if (down_trylock(&vg->cmd_read_mutex) == 0) {
+    vg->next_cmd_req = NULL;
+    request_next_cmd(vg);
+  }
 
   return rc;
 }
 
 /* Closes the console device */
-static int cons_release (struct inode *inode, struct file *filp)
+static int cons_release(struct inode *inode, struct file *filp)
 {
   int rc;
   struct vg_dev *vg;
@@ -1573,8 +1819,42 @@ static int cons_release (struct inode *inode, struct file *filp)
   filp->private_data = NULL;
   if (vg != NULL) {
     DBG(vg, "Release the console device\n");
+    if (vg->next_cmd_req != NULL) {
+      usb_ep_dequeue(vg->bulk_out, vg->next_cmd_req);
+      free_request(vg->bulk_out, vg->next_cmd_req);
+    }
   } else {
     MERROR("File private data is NULL\n");
+  }
+
+  return rc;
+}
+
+
+/* Returns a bit mask indicating the current non-blocking
+ * operations that are available for the CS device */
+static unsigned int cons_poll(struct file *filp,
+			      struct poll_table_struct *wait)
+{
+  struct vg_dev *vg;
+  int rc;
+
+  vg = (struct vg_dev *)filp->private_data;
+
+  rc = 0;
+  if (down_trylock(&vg->cmd_read_mutex) == 0) {
+    if (vg->next_cmd_req != NULL) {
+      /* Indicate that the next command data is ready */
+      rc |= (POLLIN | POLLRDNORM);
+    }
+    up(&vg->cmd_read_mutex);
+  }
+  if (atomic_read(&vg->statuses_written) < mod_data.maxwrites) {
+    /* Indicate that the write limit isn't exceeded */
+    rc |= (POLLOUT | POLLWRNORM);
+  } else {
+    /* Add the command wait-queue to the poll table */
+    poll_wait(filp, &vg->cons_wait, wait);
   }
 
   return rc;
@@ -1608,7 +1888,7 @@ static int fifo_open (struct inode *inode, struct file *filp)
   int rc;
 
   rc = 0;
-  vg = container_of(inode->i_cdev, struct vg_dev, fifo_dev);
+  vg = the_vg;
   DBG(vg, "Open the FIFO device\n");
 
   filp->private_data = vg;
@@ -1627,6 +1907,9 @@ static int fifo_release (struct inode *inode, struct file *filp)
   filp->private_data = NULL;
   if (vg != NULL) {
     DBG(vg, "Release the FIFO device\n");
+    if (test_and_clear_bit(FIFO_ERROR, &vg->flags)) {
+      DBG(vg, "Clear the FIFO error flag\n");
+    }
   } else {
     MERROR("File private data is NULL\n");
   }
@@ -1702,9 +1985,11 @@ static int fifo_vma_fault(struct vm_area_struct *vma,
 
   mreq = (struct usb_mapped_request *) vma->vm_private_data;
   if (mreq != NULL) {
-    MDBG("Handle page fault request at 0x%lx\n", vmf->pgoff);
+    MDBG("Handle page fault request at 0x%lx\n",
+	 vmf->pgoff << PAGE_SHIFT);
     //vmf->page = NOPAGE_SIGBUS;
-    vmf->page = virt_to_page(mreq->req->buf + vmf->pgoff);
+    vmf->page = virt_to_page(mreq->req->buf			\
+			     + (vmf->pgoff << PAGE_SHIFT));
     if (vmf->page != NULL) {
       get_page(vmf->page);
       vmf->flags |= VM_FAULT_MINOR;
@@ -1771,13 +2056,36 @@ static int fifo_mmap (struct file *filp, struct vm_area_struct *vma)
   return rc;
 }
 
-/* Handles a finished FIFO request and send notification */
+/* Free the page reqeust resources */
+static void free_page_request(struct usb_ep *ep,
+			      struct usb_request *req)
+{
+  struct vg_dev *vg;
+
+  vg = (struct vg_dev *) ep->driver_data;
+
+  DBG(vg, "Free a request for page delivery\n");
+  dma_unmap_page(&vg->gadget->dev, req->dma, req->length,
+		 DMA_TO_DEVICE);
+  usb_ep_free_request(ep, req);
+}
+
+/* Handles a finished FIFO request, set error status accordingly 
+ * and sent the notification */
 static void fifo_complete_notify(struct usb_ep *ep,
 				 struct usb_request *req)
 {
+  struct vg_dev *vg;
   struct completion *req_compl;
 
   ep_complete_common(ep, req);
+
+  vg = (struct vg_dev *) ep->driver_data;
+
+  if (req->status != 0 || req->actual < req->length) {
+    DBG(vg, "Set the FIFO error status\n");
+    set_bit(FIFO_ERROR, &vg->flags);
+  }
 
   if (req->actual > req->length) {
     MDBG("Fix the actual sent value: %d/%d -> %d\n",
@@ -1789,9 +2097,12 @@ static void fifo_complete_notify(struct usb_ep *ep,
 
   req_compl = (struct completion *) req->context;
   if (req_compl != NULL) {
+    DBG(vg, "Sent request completion notification");
     complete(req_compl);
   } else {
-    MERROR("No nofinication handler\n");
+    free_page_request(ep, req);
+    DBG(vg, "Turn up the FIFO write limit semaphore\n");
+    up(&vg->fifo_wrlim);
   }
 }
 
@@ -1808,6 +2119,16 @@ static ssize_t fifo_sendpage (struct file *filp,
   struct usb_request *req;
 
   vg = (struct vg_dev *) filp->private_data;
+
+  if (test_bit(FIFO_ERROR, &vg->flags) != 0) {
+    ERROR(vg, "One or more FIFO requests failed\n");
+    len = -EFAULT;
+  }
+
+  if (length == PAGE_SIZE) {
+    more = 1;
+  }
+
   if (vg != NULL) {
     DBG(vg, "Send a page over the USB channel\n");
     DBG(vg, "Allocate a request for page delivery\n");
@@ -1833,43 +2154,53 @@ static ssize_t fifo_sendpage (struct file *filp,
 				 offset,
 				 length,
 				 DMA_TO_DEVICE)) != 0) {
-      struct completion *req_compl;
-      if ((req_compl =
-	   kmalloc(sizeof *req_compl, GFP_KERNEL)) != NULL) {
-	init_completion(req_compl);
-	req->context = req_compl;
+      struct completion req_compl;
+      if (!more) {
+	init_completion(&req_compl);
+	req->context = &req_compl;
+      } else {
+	req->context = NULL;
+      }
+      DBG(vg, "Turn down the FIFO write limit semaphore\n");
+      if (down_interruptible(&vg->fifo_wrlim) == 0) {
 	if (enqueue_request(vg->bulk_in,
 			    req,
 			    fifo_complete_notify) == 0) {
-	  DBG(vg, "Wait for the request to complete\n");
-	  wait_for_completion(req_compl);
-	  DBG(vg, "Return the actual amount sent (%d/%d)\n",
-	      req->actual,
-	      length);
-	  len = req->actual;
-	  DBG(vg, "Free a request for page delivery\n");
-	  dma_unmap_page(&vg->gadget->dev, req->dma, length,
-			 DMA_TO_DEVICE);
-	  usb_ep_free_request(vg->bulk_in, req);
 	  if (!more) {
+	    DBG(vg, "No more data to send. "
+		"Wait for the request to complete\n");
+	    wait_for_completion(&req_compl);
+	    DBG(vg, "Last request finished (%d/%d)\n",
+		req->actual,
+		length);
+	    if (test_bit(FIFO_ERROR, &vg->flags) == 0) {
+	      len = req->actual;
+	    } else {
+	      ERROR(vg, "One or more FIFO requests failed\n");
+	      len = -EFAULT;
+	    }
+	    free_page_request(vg->bulk_in, req);
+	    DBG(vg, "Turn up the FIFO write limit semaphore\n");
+	    up(&vg->fifo_wrlim);
 	    DBG(vg, "No more data to send -- flush the EP FIFO\n");
 	    usb_ep_fifo_flush(vg->bulk_in);
+	  } else {
+	    len = length;
 	  }
-	  kfree(req_compl);
 	} else {
 	  ERROR(vg, "Unable to enqueue a USB request\n");
 	  len = -EFAULT;
 	}
       } else {
-	ERROR(vg, "Unable to allocate a completion object\n");
-	len = -ENOMEM;
+	ERROR(vg, "Interrupted. Send restart system signal\n");
+	len = -ERESTARTSYS;
       }
     } else {
       ERROR(vg, "Unable to map a page for DMA\n");
       len = -EFAULT;
     }
   }
-
+  
   return len;
 }
 

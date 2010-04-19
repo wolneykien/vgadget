@@ -27,5 +27,5 @@ clean:
 	[ ! -f Module.symvers ] || rm Module.symvers
 	[ ! -f modules.order ] || rm modules.order
 
-install:
+install: all
 	make -C $(LINUX_DIR) M=$(PWD) modules_install

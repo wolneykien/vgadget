@@ -46,6 +46,12 @@ struct vg_dev {
         int			pid;
         struct completion       main_event;
         struct completion       main_exit;
+        struct completion       bind_complete;
+        struct semaphore        fifo_wrlim;
+        struct semaphore        status_wrlim;
+        atomic_t                statuses_written;
+        wait_queue_head_t       cons_wait;
+        struct semaphore        cmd_read_mutex;
 
         /* Endpoints */
 	struct usb_ep		*ep0;
@@ -54,8 +60,8 @@ struct vg_dev {
         struct usb_ep		*bulk_status_in;
 
         /* Character devices */
-        struct cdev             cons_dev;
-        struct cdev             fifo_dev;
+        struct usb_request      *next_cmd_req;
+        ssize_t                 next_cmd_offs;
 };
 
 /* Constatns for state flags */
@@ -66,3 +72,4 @@ struct vg_dev {
 #define SUSPENDED               0x04
 #define CONS_REGISTERED         0x05
 #define FIFO_REGISTERED         0x06
+#define FIFO_ERROR              0x07

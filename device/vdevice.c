@@ -22,6 +22,11 @@
 #include <linux/kthread.h>
 #include <asm/bitops.h>
 #include <linux/wait.h>
+#include <linux/splice.h>
+#include <linux/mm.h>
+#include <asm/page.h>
+
+#include "pipem.c"
 
 /* Various macros */
 #define info(format, arg...) \
@@ -53,11 +58,6 @@ MODULE_PARM_DESC(vendor, "USB Vendor ID");
 module_param_named(product, vdev_table[0].idProduct, ushort, S_IRUGO);
 MODULE_PARM_DESC(product, "USB Product ID");
 
-/* General I/O timemout, jiffies */
-static int timeout = 10000;
-module_param_named(timeout, timeout, int, S_IRUGO);
-MODULE_PARM_DESC(timeout, "I/O timeout, jiffies");
-
 /* CS USB class driver info (prototype) */
 static struct usb_class_driver vdev_class;
 
@@ -80,6 +80,12 @@ MODULE_PARM_DESC(maxwrites,
 static int maxreads = 4;
 module_param_named(maxreads, maxreads, int, S_IRUGO);
 MODULE_PARM_DESC(maxreads, "The number of read-ahead buffers");
+
+/* Fake read parameter */
+static int fakeread = 0;
+module_param_named(fakeread, fakeread, int, S_IRUGO);
+MODULE_PARM_DESC(fakeread, "Short-circuit the read loop "
+		 "to measure maximum speed");
 
 /* Common structure to hold working data of the devices */
 struct usb_vdev_common {
@@ -105,8 +111,11 @@ struct usb_vdev {
   __u8 bulk_status_in_epaddr;
   /* the buffer to send command data */
   __u8 bulk_out_epaddr;
-  wait_queue_head_t cmd_wait;
+  wait_queue_head_t cons_wait;
   atomic_t cmds_sent;
+  struct urb *next_status_urb;
+  ssize_t next_status_offs;
+  struct semaphore status_read_mutex;
 };
 #define to_vdev(d) container_of(d, struct usb_vdev, kref)
 
@@ -142,8 +151,8 @@ struct usb_vfdev {
   unsigned long read_ahead_flags;
   struct semaphore read_ahead_running;
   struct completion read_ahead_exit;
-  struct urb *incomplete_urb;
-  unsigned long urb_offs;
+  struct urb *current_urb;
+  unsigned long current_offs;
   wait_queue_head_t fifo_wait;
 };
 #define to_vfdev(d) container_of(d, struct usb_vfdev, kref)
@@ -197,14 +206,16 @@ static int open_common(struct inode *inode,
 
 	interface = usb_find_interface(driver, subminor);
 	if (!interface) {
-		err ("%s - error, can't find device for minor %d",
-		     __FUNCTION__, subminor);
-		return -ENODEV;
+	  err ("Error open the device: can't find device for minor %d",
+	       subminor);
+	  return -ENODEV;
 	}
 
 	dev = usb_get_intfdata(interface);
 	if (!dev) {
-	        return -ENODEV;
+	  err("Error open the device: no device is associated "
+	      "with the interface");
+	  return -ENODEV;
 	}
 
 	/* increment our usage count for the device */
@@ -216,15 +227,35 @@ static int open_common(struct inode *inode,
 	return 0;
 }
 
+/* Requests a next status from the gadget (prototype) */
+static int request_next_status(struct usb_vdev *dev);
+
 /* Accociates the CS device on the device class file open */
 static int vdev_open(struct inode *inode, struct file *file)
 {
-  return open_common(inode, file, &vdev_driver);
+  struct usb_vdev *dev;
+  int rc;
+
+  rc = open_common(inode, file, &vdev_driver);
+
+  if (rc == 0) {
+    dev = (struct usb_vdev *) file->private_data;
+    if (down_trylock(&dev->status_read_mutex) == 0) {
+      dev->next_status_urb = NULL;
+      request_next_status(dev);
+    }
+  }
+
+  return rc;
 }
 
 /* Accociates the FIFO device on the device class file open */
 static int vfdev_open(struct inode *inode, struct file *file)
 {
+  if (fakeread) {
+    info("Attention! Device in is FAKE read mode. "
+	 "Use only for speed testing");
+  }
   return open_common(inode, file, &vfdev_driver);
 }
 
@@ -244,66 +275,6 @@ static int release_common(struct inode *inode,
 	return 0;
 }
 
-/* De-associetes the CS device and driver instances */
-static int vdev_release(struct inode *inode, struct file *file)
-{
-  return release_common(inode, file, vdev_delete);
-}
-
-/* De-associetes the FIFO device and driver instances */
-static int vfdev_release(struct inode *inode, struct file *file)
-{
-  return release_common(inode, file, vfdev_delete);
-}
-
-/* Interface procedure for reading data from a gadget */
-static ssize_t read_common(struct file *file,
-			   char *buffer,
-			   size_t count,
-			   loff_t *ppos,
-			   unsigned char *bulk_in_buffer,
-			   size_t bulk_in_size,
-			   __u8 bulk_in_epaddr)
-{
-  struct usb_vdev_common *dev;
-  int retval = 0;
-  int bytes_read;
-
-  dev = (struct usb_vdev_common *)file->private_data;
-	
-  /* do a blocking bulk read to get data from the device */
-  retval = usb_bulk_msg(dev->udev,
-			usb_rcvbulkpipe(dev->udev,
-					bulk_in_epaddr),
-			bulk_in_buffer,
-			min(bulk_in_size, count),
-			&bytes_read, timeout);
-
-  /* if the read was successful, copy the data to userspace */
-  // TODO: copy via DMA
-  if (!retval) {
-    if (copy_to_user(buffer, bulk_in_buffer, bytes_read)) {
-      retval = -EFAULT;
-    } else {
-      retval = bytes_read;
-    }
-  }
-
-  return retval;
-}
-
-/* Interface procedure for reading status data from a gadget */
-static ssize_t status_read(struct file *file, char *buffer, size_t count, loff_t *ppos)
-{
-  struct usb_vdev *dev;
-
-  dev = (struct usb_vdev *)file->private_data;
-  return read_common(file, buffer, count, ppos,
-		     dev->bulk_status_in_buffer,
-		     dev->bulk_status_in_size,
-		     dev->bulk_status_in_epaddr);
-}
-
 /* Free a given URB */
 static void free_urb(struct urb *urb)
 {
@@ -314,6 +285,147 @@ static void free_urb(struct urb *urb)
   }
   /* Release the reference to the URB */
   usb_free_urb(urb);
+}
+
+/* De-associetes the CS device and driver instances */
+static int vdev_release(struct inode *inode, struct file *file)
+{
+  struct usb_vdev *dev;
+
+  dev = (struct usb_vdev *) file->private_data;
+  if (dev->next_status_urb != NULL) {
+    usb_kill_urb(dev->next_status_urb);
+    free_urb(dev->next_status_urb);
+  }
+  return release_common(inode, file, vdev_delete);
+}
+
+/* De-associetes the FIFO device and driver instances */
+static int vfdev_release(struct inode *inode, struct file *file)
+{
+  return release_common(inode, file, vfdev_delete);
+}
+
+/* Handles the status-read request completion */
+static void vdev_status_read_callback(struct urb *urb)
+{
+  struct usb_vdev *dev;
+
+  dev = (struct usb_vdev *)urb->context;
+
+  /* sync/async unlink faults aren't errors */
+  if (urb->status && 
+      !(urb->status == -ENOENT || 
+	urb->status == -ECONNRESET ||
+	urb->status == -ESHUTDOWN)) {
+    dbg("%s - nonzero write bulk status received: %d",
+	__FUNCTION__, urb->status);
+  }
+
+  /* Send notifications */
+  dev->next_status_offs = 0;
+  up(&dev->status_read_mutex);
+  wake_up(&dev->cons_wait);
+}
+
+/* Requests a next status from the gadget */
+static int request_next_status(struct usb_vdev *dev)
+{
+  int rc;
+
+  if (dev->next_status_urb != NULL) {
+    free_urb(dev->next_status_urb);
+    dev->next_status_urb = NULL;
+  }
+  dev->next_status_offs = 0;
+
+  rc = 0;
+  dbg("Allocate a request for the next status");
+  if ((dev->next_status_urb = usb_alloc_urb(0, GFP_KERNEL)) != NULL) {
+    void *buf;
+    dbg("Allocate a buffer for the status transfer");
+    buf = usb_buffer_alloc(dev->udev,
+			   READ_BUF_SIZE,
+			   GFP_KERNEL,
+			   &dev->next_status_urb->transfer_dma);
+    if (buf != NULL) {
+      dbg("Initialize the status-read URB");
+      usb_fill_bulk_urb(dev->next_status_urb,
+			dev->udev,
+			usb_rcvbulkpipe(dev->udev,
+					dev->bulk_status_in_epaddr),
+			buf, READ_BUF_SIZE,
+			vdev_status_read_callback,
+			dev);
+      dev->next_status_urb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
+      dbg("Submit the status-read URB");
+      if ((rc = usb_submit_urb(dev->next_status_urb, GFP_KERNEL)) != 0) {
+	err("Failed submitting status-read urb, error %d", rc);
+      }
+    } else {
+      err("Unable to acllocate a buffer for the command transfer");
+      rc = -ENOMEM;
+    }
+  } else {
+    err("Unable to acllocate an URB for the status transfer");
+    rc = -ENOMEM;
+  }
+
+  if (rc != 0) {
+    if (dev->next_status_urb != NULL) {
+      free_urb(dev->next_status_urb);
+      dev->next_status_urb = NULL;
+    }
+  }
+
+  return rc;
+}
+
+/* Interface procedure for reading status data from a gadget */
+static ssize_t status_read(struct file *file, char *buffer, size_t count, loff_t *ppos)
+{
+  struct usb_vdev *dev;
+  ssize_t len;
+  int rc;
+
+  dev = (struct usb_vdev *) file->private_data;
+
+  dbg("Read status data from the gadget");
+  len = 0;
+
+  if (down_interruptible(&dev->status_read_mutex) == 0) {
+    if (dev->next_status_urb != NULL) {
+      if (dev->next_status_urb->status == 0) {
+	len = min(count,
+		  dev->next_status_urb->actual_length \
+		  - dev->next_status_offs);
+	if ((rc = copy_to_user(buffer,
+			       dev->next_status_urb->transfer_buffer \
+			       + dev->next_status_offs,
+			       len)) == 0) {
+	  dev->next_status_offs += len;
+	  if (dev->next_status_offs == \
+	      dev->next_status_urb->actual_length) {
+	    request_next_status(dev);
+	  }
+	} else {
+	  err("Unable to copy the status data to the user");
+	  len = rc;
+	}
+      } else {
+	err("Status-read error (%d)", dev->next_status_urb->status);
+	len = -EFAULT;
+      }
+    } else {
+      err("Expected the next status in the buffer");
+      len = -EFAULT;
+    }
+  } else {
+    err("Interrupted. Send the system restart signal");
+    len = -ERESTARTSYS;
+  }
+
+  return len;
 }
 
 /* Handles a finished bulk write request */
@@ -337,7 +449,7 @@ static void vdev_write_bulk_callback(struct urb *urb)
 			urb->transfer_buffer, urb->transfer_dma);
 	/* Send notifications */
 	up(&dev->limit_sem);
-	wake_up(&dev->cmd_wait);
+	wake_up(&dev->cons_wait);
 	atomic_dec(&dev->cmds_sent);
 }
 
@@ -350,41 +462,56 @@ static ssize_t cmd_write(struct file *file, const char *user_buffer, size_t coun
 	char *buf = NULL;
 	size_t writesize = min(count, (size_t)MAX_TRANSFER);
 
+	dbg("Process a command-write request");
+
 	dev = (struct usb_vdev *)file->private_data;
 
 	/* verify that we actually have some data to write */
 	if (count == 0) {
+	  dbg("Zero command. Return");
 	  return 0;
 	}
 
 	/* limit the number of URBs in flight to stop a user from using up all RAM */
+	dbg("Turn down the write-limit semaphore");
 	if (down_interruptible(&dev->limit_sem)) {
 		return -ERESTARTSYS;
 	} else {
+	  dbg("Increment the number of sent commands");
 	  atomic_inc(&dev->cmds_sent);
 	}
 	/* create a urb, and a buffer for it, and copy the data to the urb */
+	dbg("Allocate an URB for the command transfer");
 	urb = usb_alloc_urb(0, GFP_KERNEL);
 	if (!urb) {
+	        err("Unable to acllocate an URB for the "
+		    "command transfer");
 		return -ENOMEM;
 	}
 
+	dbg("Allocate a buffer for the command transfer");
 	buf = usb_buffer_alloc(dev->udev, writesize, GFP_KERNEL, &urb->transfer_dma);
 	if (!buf) {
+	        err("Unable to acllocate a buffer for the "
+		    "command transfer");
 		return -ENOMEM;
 	}
-	// TODO: transfer via DMA
+
+	dbg("Copy the command data from the user buffer");
 	if (copy_from_user(buf, user_buffer, writesize)) {
+	        err("Unable to copy the command data");
 		return -EFAULT;
 	}
 
 	/* initialize the urb properly */
+	dbg("Initialize the command URB");
 	usb_fill_bulk_urb(urb, dev->udev,
 			  usb_sndbulkpipe(dev->udev, dev->bulk_out_epaddr),
 			  buf, writesize, vdev_write_bulk_callback, dev);
 	urb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
 
 	/* send the data out the bulk port */
+	dbg("Submit the command URB");
 	retval = usb_submit_urb(urb, GFP_KERNEL);
 	if (retval != 0) {
 		err("%s - failed submitting write urb, error %d", __FUNCTION__, retval);
@@ -508,17 +635,25 @@ static int fifo_read_enqueue(struct usb_vfdev *dev)
 			buf, MAX_TRANSFER, vfdev_bulk_read_callback,
 			dev);
       urb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
-      /* send the read request */
-      if ((rc = usb_submit_urb(urb, GFP_KERNEL)) == 0) {
-	dbg("Submit a read-ahead URB: "
-	    "addr = 0x%x, "
-	    "size = %d b",
-	    dev->bulk_in_epaddr,
-	    urb->transfer_buffer_length);
+
+      if (fakeread) {
+	/* Short-circuit the URB: put it directly into the read queue */
+	urb->actual_length = urb->transfer_buffer_length;
+	urb->status = 0;
+	rc = vfdev_urb_offer(dev, urb);
       } else {
-	err("%s - failed submitting read urb, error %d",
-	    __FUNCTION__,
-	    rc);
+	/* Send the read request */
+	if ((rc = usb_submit_urb(urb, GFP_KERNEL)) == 0) {
+	  dbg("Submit a read-ahead URB: "
+	      "addr = 0x%x, "
+	      "size = %d b",
+	      dev->bulk_in_epaddr,
+	      urb->transfer_buffer_length);
+	} else {
+	  err("%s - failed submitting read urb, error %d",
+	      __FUNCTION__,
+	      rc);
+	}
       }
     }
 
@@ -614,11 +749,30 @@ static int vfdev_urb_take(struct usb_vfdev *dev,
   return rc;
 }
 
+/* Leaves the current incomplete URB if any or a next one
+ * from the queue */
+static int vfdev_prepare_urb(struct usb_vfdev *dev)
+{
+  int rc;
+
+  if (dev->current_urb) {
+    dbg("Use the incomplete URB: %lu/%d",
+	dev->current_offs,
+	dev->current_urb->actual_length);
+    rc = 0;
+  } else {
+    /* Take the next URB from the queue */
+    rc = vfdev_urb_take(dev, &dev->current_urb);
+    dev->current_offs = 0;
+  }
+
+  return rc;
+}
+
 /* Interface procedure for reading file data from a gadget */
 static ssize_t fifo_read(struct file *file, char *buffer, size_t count, loff_t *ppos)
 {
   struct usb_vfdev *dev;
-  struct urb *urb;
   size_t len;
   size_t rc;
 
@@ -626,37 +780,27 @@ static ssize_t fifo_read(struct file *file, char *buffer, size_t count, loff_t *
 
   dbg("Process a FIFO read request");
 
-  urb = NULL;
-  if (dev->incomplete_urb) {
-    dbg("Take an incomplete urb: %lu/%d",
-	dev->urb_offs,
-	urb->actual_length);
-    urb = dev->incomplete_urb;
-    rc = 0;
-  } else {
-    /* Take the next URB from the queue */
-    rc = vfdev_urb_take(dev, &urb);
-    dev->urb_offs = 0;
-  }
+  rc = vfdev_prepare_urb(dev);
 
   if (rc == 0) {
-    // TODO: copy via DMA
     dbg("Copy taken URB to the userspace");
     len = min((unsigned long) count,
-	      ((unsigned long) urb->actual_length) - dev->urb_offs);
+	      ((unsigned long) dev->current_urb->actual_length) \
+	      - dev->current_offs);
     if ((rc = copy_to_user(buffer,
-			   urb->transfer_buffer + dev->urb_offs,
+			   dev->current_urb->transfer_buffer \
+			   + dev->current_offs,
 			   len)) >= 0) {
-      dev->urb_offs += len;
+      dev->current_offs += len;
       dbg("Return the actual bytes read: %d/%lu",
-	  urb->actual_length,
-	  dev->urb_offs);
+	  dev->current_urb->actual_length,
+	  dev->current_offs);
       rc = len;
     }
-    if (dev->urb_offs == urb->actual_length) {
+    if (dev->current_offs == dev->current_urb->actual_length) {
       dbg("Free the URB");
-      free_urb(urb);
-      dev->incomplete_urb = NULL;
+      free_urb(dev->current_urb);
+      dev->current_urb = NULL;
     }
   }
 
@@ -666,6 +810,150 @@ static ssize_t fifo_read(struct file *file, char *buffer, size_t count, loff_t *
   }*/
 
   return rc;
+}
+
+/* Releases the URB related to a given FIFO pipe buffer if any */
+static void fifo_pipe_buf_release(struct pipe_inode_info *pipe,
+				  struct pipe_buffer *buf)
+{
+  struct urb *urb;
+
+  urb = (struct urb *)page_private(buf->page);
+  dbg("Release a page");
+  //  page_cache_release(buf->page);
+
+  if (urb != NULL) {
+    dbg("Free an URB all the data has been read from");
+    free_urb(urb);
+  }
+}
+
+/* Describes the FIFO pipe buffer operations */
+static const struct pipe_buf_operations fifo_pipe_buf_ops = {
+  .can_merge = 0,
+  .map = generic_pipe_buf_map,
+  .unmap = generic_pipe_buf_unmap,
+  .confirm = generic_pipe_buf_confirm,
+  .release = fifo_pipe_buf_release,
+  .steal = generic_pipe_buf_steal,
+  .get = generic_pipe_buf_get,
+};
+
+/* Releases the given page (currently do nothing) */
+static void fifo_page_release(struct splice_pipe_desc *spd,
+			      unsigned int i)
+{
+  dbg("Release a page #%d", i);
+  page_cache_release(spd->pages[i]);
+}
+
+/* Splices the number of buffers to a given pipe */
+static ssize_t fifo_splice_read(struct file *in,
+				loff_t *ppos,
+				struct pipe_inode_info *pipe,
+				size_t count,
+				unsigned int flags)
+{
+  struct usb_vfdev *dev;
+  struct page *pages[PIPE_BUFFERS];
+  struct partial_page partial[PIPE_BUFFERS];
+  struct splice_pipe_desc spd = {
+    .pages = pages,
+    .nr_pages = 0,
+    .partial = partial,
+    .flags = flags,
+    .ops = &fifo_pipe_buf_ops,
+    .spd_release = fifo_page_release,
+  };
+  ssize_t ret;
+  size_t mapped;
+  int rc;
+
+  dev = (struct usb_vfdev *)in->private_data;
+
+  dbg("Process a FIFO splice-read request");
+
+  /* Ignore the position -- splice the data as it comes */
+
+  /* Splice the data to the pipe until the len bytes spliced */
+  rc = 0;
+  ret = 0;
+  mapped = 0;
+  while (rc == 0 && ret < count) {
+    size_t spliced;
+
+    /* Map up the pipe buffers */
+    spd.nr_pages = 0;
+    while (rc == 0 \
+	   && mapped < count \
+	   && spd.nr_pages < PIPE_BUFFERS) {
+      struct page *page;
+      unsigned long offs;
+      unsigned long len;
+
+      /* Get the URB and offset to transfer */
+      if ((rc = vfdev_prepare_urb(dev)) == 0) {
+	/* Add URB page to the pipe */
+	page =
+	  virt_to_page(dev->current_urb->transfer_buffer	\
+		       + dev->current_offs);
+	pages[spd.nr_pages] = page;
+	/* Calculate the in-page offset of the buffer start */
+	offs =
+	  dev->current_urb->transfer_buffer		\
+	  + dev->current_offs				\
+	  - page_address(page);
+	partial[spd.nr_pages].offset = offs;
+	/* Calculate the data length on the page */
+	len =
+	  min((unsigned long) PAGE_SIZE - offs,
+	      ((unsigned long) dev->current_urb->actual_length)	\
+	      - dev->current_offs);
+	partial[spd.nr_pages].len = len;
+	/* Increment the pages counter */
+	dbg("Add a page to the pipe");
+	spd.nr_pages++;
+	/* Shift the URB budder offset len bytes more */
+	if ((dev->current_offs += len)			\
+	    == dev->current_urb->actual_length) {
+	  dbg("Whole URB buffer is mapped to the pipe");
+	  /* Set the URB as a page private data to free it when the
+	   * data is read */
+	  set_page_private(page, (unsigned long) dev->current_urb);
+	  dev->current_urb = NULL;
+	} else {
+	  dbg("%ld/%ld of the URB buffer is mapped to the pipe",
+	      dev->current_offs,
+	      (unsigned long) dev->current_urb->actual_length);
+	  set_page_private(page, (unsigned long) NULL);
+	}
+	mapped += len;
+      }
+    }
+
+    /* Splice the mapped buffers out */
+    if (rc == 0) {
+      if ((spliced = splice_to_pipe(pipe, &spd)) > 0) {
+	dbg("%ld (more) bytes has been spliced", (unsigned long) spliced);
+	ret += spliced;
+      } else {
+	if (spliced == 0 && (flags & SPLICE_F_NONBLOCK)) {
+	  rc = -EAGAIN;
+	  err("Signal to read again in the case of non-clocking reading");
+	} else {
+	  rc = spliced;
+	  err("Unable to splice the mapped buffers to the pipe");
+	}
+      }
+    }
+  }
+
+  /* In the case of an error return its code */
+  if (rc != 0) {
+    ret = rc;
+  }
+
+  return ret;
 }
 
 /* Returns a bit mask indicating the current non-blocking
@@ -679,12 +967,19 @@ static unsigned int vdev_poll(struct file *filp,
   dev = (struct usb_vdev *)filp->private_data;
 
   rc = 0;
+  if (down_trylock(&dev->status_read_mutex) == 0) {
+    if (dev->next_status_urb != NULL) {
+      /* Indicate that the next status data is ready */
+      rc |= (POLLIN | POLLRDNORM);
+    }
+    up(&dev->status_read_mutex);
+  }
   if (atomic_read(&dev->cmds_sent) < maxwrites) {
     /* Indicate that the write limit isn't exceeded */
     rc |= (POLLOUT | POLLWRNORM);
   } else {
     /* Add the command wait-queue to the poll table */
-    poll_wait(filp, &dev->cmd_wait, wait);
+    poll_wait(filp, &dev->cons_wait, wait);
   }
 
   return rc;
@@ -747,6 +1042,7 @@ static struct file_operations vfdev_fops = {
 	.open =		vfdev_open,
 	.release =	vfdev_release,
 	.poll =         vfdev_poll,
+	.splice_read =  fifo_splice_read,
 };
 
 /* FIFO USB class driver info */
@@ -787,8 +1083,9 @@ static int vdev_probe(struct usb_interface *interface, const struct usb_device_i
 	}
 	kref_init(&dev->kref);
 	sema_init(&dev->limit_sem, maxwrites);
+	sema_init(&dev->status_read_mutex, 1);
 	atomic_set(&dev->cmds_sent, 0);
-	init_waitqueue_head(&dev->cmd_wait);
+	init_waitqueue_head(&dev->cons_wait);
 
 	dev->udev = usb_get_dev(interface_to_usbdev(interface));
 	dev->interface = interface;
@@ -975,7 +1272,7 @@ static int vfdev_probe(struct usb_interface *interface, const struct usb_device_
 	init_completion(&dev->read_ahead_exit);
 	init_waitqueue_head(&dev->fifo_wait);
 	dev->queue = NULL;
-	dev->incomplete_urb = NULL;
+	dev->current_urb = NULL;
 
 	dev->udev = usb_get_dev(interface_to_usbdev(interface));
 	dev->interface = interface;

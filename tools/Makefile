@@ -16,7 +16,7 @@ clean:
 	[ ! -f tcpclient ] || rm tcpclient
 	[ ! -f splice ] || rm splice
 
-install:
+install: all
 	install -D -m0755 tcpserver $(PREFIX)/bin/tcpserver
 	install -D -m0755 tcpclient $(PREFIX)/bin/tcpclient
 	install -D -m0755 splice $(PREFIX)/bin/splice
