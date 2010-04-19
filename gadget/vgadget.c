@@ -471,17 +471,17 @@ module_param_named(config, mod_data.config, uint, S_IRUGO);
 MODULE_PARM_DESC(config, "Optionally set the device configuration number");
 
 module_param_named(cmd_addr, fs_bulk_out_desc.bEndpointAddress,
-		   uint, S_IRUGO);
+		   byte, S_IRUGO);
 MODULE_PARM_DESC(cmd_addr, "Optionally set the address of the command "
 		 "endpoint (OUT)");
 
 module_param_named(status_addr, fs_bulk_status_in_desc.bEndpointAddress,
-		   uint, S_IRUGO);
+		   byte, S_IRUGO);
 MODULE_PARM_DESC(status_addr, "Optionally set the address of the status "
 		 "endpoint (IN)");
 
 module_param_named(fifo_addr, fs_bulk_in_desc.bEndpointAddress,
-		   uint, S_IRUGO);
+		   byte, S_IRUGO);
 MODULE_PARM_DESC(fifo_addr, "Optionally set the address of the FIFO "
 		 "endpoint (IN)");
 
@@ -947,7 +947,7 @@ static __init int vg_bind(struct usb_gadget *gadget)
 	  /* Find all the endpoints we will use */
 	  DBG(vg, "Endpoint autoconfguration\n");
 	  usb_ep_autoconfig_reset(gadget);
-	  if (fs_bulk_out_desc.bEndpointAddress = USB_DIR_OUT) {
+	  if (fs_bulk_out_desc.bEndpointAddress == USB_DIR_OUT) {
 	    if ((rc = autoconfig_endpoint(vg,
 					  &vg->bulk_out,
 					  &fs_bulk_out_desc)) != 0) {
@@ -955,7 +955,7 @@ static __init int vg_bind(struct usb_gadget *gadget)
 	    }
 	  }
 	  if (rc == 0 \
-	      && fs_bulk_in_desc.bEndpointAddress = USB_DIR_IN) {
+	      && fs_bulk_in_desc.bEndpointAddress == USB_DIR_IN) {
 	    if ((rc = autoconfig_endpoint(vg,
 					  &vg->bulk_in,
 					  &fs_bulk_in_desc)) != 0) {
@@ -963,7 +963,7 @@ static __init int vg_bind(struct usb_gadget *gadget)
 	    }
 	  }
 	  if (rc == 0 \
-	      && fs_bulk_status_in_desc.bEndpointAddress = USB_DIR_IN) {
+	      && fs_bulk_status_in_desc.bEndpointAddress == USB_DIR_IN) {
 	    if ((rc = autoconfig_endpoint(vg,
 					  &vg->bulk_status_in,
 					  &fs_bulk_status_in_desc)) != 0) {
