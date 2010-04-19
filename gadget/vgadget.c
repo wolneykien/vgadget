@@ -93,9 +93,6 @@ static struct {
 #define STRING_SERIAL		3
 #define STRING_CONFIG		4
 
-/* There is only one configuration. */
-#define	NUMBER_OF_CONFIGS	1
-
 /* Endpoint 0 buffer size */
 #define EP0_BUFSIZE 1024
 
@@ -119,7 +116,7 @@ device_desc = {
 	.iManufacturer =	STRING_MANUFACTURER,
 	.iProduct =		STRING_PRODUCT,
 	.iSerialNumber =	STRING_SERIAL,
-	.bNumConfigurations =	1,
+	.bNumConfigurations =	2,
 };
 
 /* The gadget USB configuration descriptor */
@@ -131,6 +128,19 @@ config_desc = {
 	/* wTotalLength computed by usb_gadget_config_buf() */
 	.bNumInterfaces =	2,
 	.bConfigurationValue =	1,
+	.bmAttributes =		USB_CONFIG_ATT_ONE | USB_CONFIG_ATT_SELFPOWER,
+	.bMaxPower =		1,	// self-powered
+};
+
+/* Second configuration descriptor */
+static struct usb_config_descriptor
+stk_config_desc = {
+	.bLength =		sizeof config_desc,
+	.bDescriptorType =	USB_DT_CONFIG,
+
+	/* wTotalLength computed by usb_gadget_config_buf() */
+	.bNumInterfaces =	1,
+	.bConfigurationValue =	2,
 	.bmAttributes =		USB_CONFIG_ATT_ONE | USB_CONFIG_ATT_SELFPOWER,
 	.bMaxPower =		1,	// self-powered
 };
@@ -174,6 +184,21 @@ fifo_intf_desc = {
 	.bInterfaceSubClass =	USB_PR_BULK,
 	.bInterfaceProtocol =	USB_PR_BULK,
 };
+
+/* The gadget CS-FIFO sticked USB interface descritor */
+static struct usb_interface_descriptor
+stk_intf_desc = {
+	.bLength =		sizeof cs_intf_desc,
+	.bDescriptorType =	USB_DT_INTERFACE,
+
+	/* The interface number 0 */
+	.bInterfaceNumber =     0,
+	.bNumEndpoints =	3,
+	.bInterfaceClass =	USB_CLASS_VENDOR_SPEC,
+	.bInterfaceSubClass =	USB_PR_BULK,
+	.bInterfaceProtocol =	USB_PR_BULK,
+};
+
 
 /* String descriptors */
 static char manufacturer[32] = "N/A";
@@ -231,13 +256,23 @@ fs_bulk_status_in_desc = {
 };
 
 
-/* The set of full-speed endpoint descriptors */
+/* The set of full-speed descriptors for configuration #1 */
 static const struct usb_descriptor_header *fs_function[] = {
 	(struct usb_descriptor_header *) &otg_desc,
 	(struct usb_descriptor_header *) &cs_intf_desc,
 	(struct usb_descriptor_header *) &fs_bulk_out_desc,
 	(struct usb_descriptor_header *) &fs_bulk_status_in_desc,
 	(struct usb_descriptor_header *) &fifo_intf_desc,
+	(struct usb_descriptor_header *) &fs_bulk_in_desc,
+	NULL
+};
+
+/* The set of full-speed descriptors for configuration #2 */
+static const struct usb_descriptor_header *fs_stk_function[] = {
+	(struct usb_descriptor_header *) &otg_desc,
+	(struct usb_descriptor_header *) &stk_intf_desc,
+	(struct usb_descriptor_header *) &fs_bulk_out_desc,
+	(struct usb_descriptor_header *) &fs_bulk_status_in_desc,
 	(struct usb_descriptor_header *) &fs_bulk_in_desc,
 	NULL
 };
@@ -294,13 +329,23 @@ hs_bulk_status_in_desc = {
 	.wMaxPacketSize =	__constant_cpu_to_le16(MAX_PACKET_SIZE),
 };
 
-/* The set of high-speed endpoint descriptors */
+/* The set of high-speed descriptors for configuration #1 */
 static const struct usb_descriptor_header *hs_function[] = {
 	(struct usb_descriptor_header *) &otg_desc,
 	(struct usb_descriptor_header *) &cs_intf_desc,
 	(struct usb_descriptor_header *) &hs_bulk_out_desc,
 	(struct usb_descriptor_header *) &hs_bulk_status_in_desc,
 	(struct usb_descriptor_header *) &fifo_intf_desc,
+	(struct usb_descriptor_header *) &hs_bulk_in_desc,
+	NULL
+};
+
+/* The set of high-speed descriptors for configuration #2 */
+static const struct usb_descriptor_header *hs_stk_function[] = {
+	(struct usb_descriptor_header *) &otg_desc,
+	(struct usb_descriptor_header *) &stk_intf_desc,
+	(struct usb_descriptor_header *) &hs_bulk_out_desc,
+	(struct usb_descriptor_header *) &hs_bulk_status_in_desc,
 	(struct usb_descriptor_header *) &hs_bulk_in_desc,
 	NULL
 };
@@ -1049,8 +1094,9 @@ static int populate_config_buf(struct usb_gadget *gadget,
         struct vg_dev *vg = get_gadget_data(gadget);
 	int len;
 	const struct usb_descriptor_header **function;
+	struct usb_config_descriptor *conf_desc;
 
-	if (index > 0) {
+	if (index > device_desc.bNumConfigurations) {
 	  ERROR(vg, "Configuration number out of rage (%d)\n", index);
 	  return -EINVAL;
 	}
@@ -1061,10 +1107,18 @@ static int populate_config_buf(struct usb_gadget *gadget,
 	    || (type != USB_DT_OTHER_SPEED_CONFIG			\
 		&& gadget->speed == USB_SPEED_HIGH)) {
 	  DBG(vg, "Configure with high-speed functions\n");
-	  function = hs_function;
+	  if (index == 0) {
+	    function = hs_function;
+	  } else {
+	    function = hs_stk_function;
+	  }
 	} else {
 	  DBG(vg, "Configure with full-speed functions\n");
-	  function = fs_function;
+	  if (index == 0) {
+	    function = fs_function;
+	  } else {
+	    function = fs_stk_function;
+	  }
 	}
 #else
 	DBG(vg, "Configure with full-speed functions (default)\n");
@@ -1075,7 +1129,12 @@ static int populate_config_buf(struct usb_gadget *gadget,
 	if (!gadget->is_otg)
 		function++;
 
-	len = usb_gadget_config_buf(&config_desc, buf, EP0_BUFSIZE, function);
+	if (index == 0) {
+	  conf_desc = &config_desc;
+	} else {
+	  conf_desc = &stk_config_desc;
+	}
+	len = usb_gadget_config_buf(conf_desc, buf, EP0_BUFSIZE, function);
 	((struct usb_config_descriptor *) buf)->bDescriptorType = type;
 	return len;
 }
@@ -1109,6 +1168,8 @@ static int standard_setup_req(struct vg_dev *vg,
 			allocate_request(vg->ep0, EP0_BUFSIZE, res_req);
 			memcpy((*res_req)->buf, &device_desc, value);
 			set_request_length(*res_req, value);
+			DBG(vg, "Number of device configurations: %d\n",
+			    device_desc.bNumConfigurations);
 			break;
 #ifdef CONFIG_USB_GADGET_DUALSPEED
 		case USB_DT_DEVICE_QUALIFIER:
@@ -1159,7 +1220,7 @@ static int standard_setup_req(struct vg_dev *vg,
 		if (ctrl->bRequestType != (USB_DIR_OUT | USB_TYPE_STANDARD |
 				USB_RECIP_DEVICE))
 			break;
-		if (wValue <= NUMBER_OF_CONFIGS) {
+		if (wValue <= device_desc.bNumConfigurations) {
 		  value = vg_request_reconf(vg, wValue);
 		}
 		break;
@@ -1394,6 +1455,9 @@ static int do_set_interface(struct vg_dev *vg,
   switch (index) {
   case 0:
     rc = do_set_cmd_interface(vg, altsetting);
+    if (vg->config == 2) {
+      rc |= do_set_fifo_interface(vg, altsetting);
+    }
     break;
   case 1:
     rc = do_set_fifo_interface(vg, altsetting);
