@@ -58,11 +58,6 @@ MODULE_PARM_DESC(vendor, "USB Vendor ID");
 module_param_named(product, vdev_table[0].idProduct, ushort, S_IRUGO);
 MODULE_PARM_DESC(product, "USB Product ID");
 
-/* General I/O timemout, jiffies */
-static int timeout = 10000;
-module_param_named(timeout, timeout, int, S_IRUGO);
-MODULE_PARM_DESC(timeout, "I/O timeout, jiffies");
-
 /* CS USB class driver info (prototype) */
 static struct usb_class_driver vdev_class;
 
@@ -116,8 +111,11 @@ struct usb_vdev {
   __u8 bulk_status_in_epaddr;
   /* the buffer to send command data */
   __u8 bulk_out_epaddr;
-  wait_queue_head_t cmd_wait;
+  wait_queue_head_t cons_wait;
   atomic_t cmds_sent;
+  struct urb *next_status_urb;
+  ssize_t next_status_offs;
+  struct semaphore status_read_mutex;
 };
 #define to_vdev(d) container_of(d, struct usb_vdev, kref)
 
@@ -229,10 +227,26 @@ static int open_common(struct inode *inode,
 	return 0;
 }
 
+/* Requests a next status from the gadget (prototype) */
+static int request_next_status(struct usb_vdev *dev);
+
 /* Accociates the CS device on the device class file open */
 static int vdev_open(struct inode *inode, struct file *file)
 {
-  return open_common(inode, file, &vdev_driver);
+  struct usb_vdev *dev;
+  int rc;
+
+  rc = open_common(inode, file, &vdev_driver);
+
+  if (rc == 0) {
+    dev = (struct usb_vdev *) file->private_data;
+    if (down_trylock(&dev->status_read_mutex) == 0) {
+      dev->next_status_urb = NULL;
+      request_next_status(dev);
+    }
+  }
+
+  return rc;
 }
 
 /* Accociates the FIFO device on the device class file open */
@@ -261,65 +275,6 @@ static int release_common(struct inode *inode,
 	return 0;
 }
 
-/* De-associetes the CS device and driver instances */
-static int vdev_release(struct inode *inode, struct file *file)
-{
-  return release_common(inode, file, vdev_delete);
-}
-
-/* De-associetes the FIFO device and driver instances */
-static int vfdev_release(struct inode *inode, struct file *file)
-{
-  return release_common(inode, file, vfdev_delete);
-}
-
-/* Interface procedure for reading data from a gadget */
-static ssize_t read_common(struct file *file,
-			   char *buffer,
-			   size_t count,
-			   loff_t *ppos,
-			   unsigned char *bulk_in_buffer,
-			   size_t bulk_in_size,
-			   __u8 bulk_in_epaddr)
-{
-  struct usb_vdev_common *dev;
-  int retval = 0;
-  int bytes_read;
-
-  dev = (struct usb_vdev_common *)file->private_data;
-	
-  /* do a blocking bulk read to get data from the device */
-  retval = usb_bulk_msg(dev->udev,
-			usb_rcvbulkpipe(dev->udev,
-					bulk_in_epaddr),
-			bulk_in_buffer,
-			min(bulk_in_size, count),
-			&bytes_read, timeout);
-
-  /* if the read was successful, copy the data to userspace */
-  if (!retval) {
-    if (copy_to_user(buffer, bulk_in_buffer, bytes_read)) {
-      retval = -EFAULT;
-    } else {
-      retval = bytes_read;
-    }
-  }
-
-  return retval;
-}
-
-/* Interface procedure for reading status data from a gadget */
-static ssize_t status_read(struct file *file, char *buffer, size_t count, loff_t *ppos)
-{
-  struct usb_vdev *dev;
-
-  dev = (struct usb_vdev *)file->private_data;
-  return read_common(file, buffer, count, ppos,
-		     dev->bulk_status_in_buffer,
-		     dev->bulk_status_in_size,
-		     dev->bulk_status_in_epaddr);
-}
-
 /* Free a given URB */
 static void free_urb(struct urb *urb)
 {
@@ -330,6 +285,147 @@ static void free_urb(struct urb *urb)
   }
   /* Release the reference to the URB */
   usb_free_urb(urb);
+}
+
+/* De-associetes the CS device and driver instances */
+static int vdev_release(struct inode *inode, struct file *file)
+{
+  struct usb_vdev *dev;
+
+  dev = (struct usb_vdev *) file->private_data;
+  if (dev->next_status_urb != NULL) {
+    usb_kill_urb(dev->next_status_urb);
+    free_urb(dev->next_status_urb);
+  }
+  return release_common(inode, file, vdev_delete);
+}
+
+/* De-associetes the FIFO device and driver instances */
+static int vfdev_release(struct inode *inode, struct file *file)
+{
+  return release_common(inode, file, vfdev_delete);
+}
+
+/* Handles the status-read request completion */
+static void vdev_status_read_callback(struct urb *urb)
+{
+  struct usb_vdev *dev;
+
+  dev = (struct usb_vdev *)urb->context;
+
+  /* sync/async unlink faults aren't errors */
+  if (urb->status && 
+      !(urb->status == -ENOENT || 
+	urb->status == -ECONNRESET ||
+	urb->status == -ESHUTDOWN)) {
+    dbg("%s - nonzero write bulk status received: %d",
+	__FUNCTION__, urb->status);
+  }
+
+  /* Send notifications */
+  dev->next_status_offs = 0;
+  up(&dev->status_read_mutex);
+  wake_up(&dev->cons_wait);
+}
+
+/* Requests a next status from the gadget */
+static int request_next_status(struct usb_vdev *dev)
+{
+  int rc;
+
+  if (dev->next_status_urb != NULL) {
+    free_urb(dev->next_status_urb);
+    dev->next_status_urb = NULL;
+  }
+  dev->next_status_offs = 0;
+
+  rc = 0;
+  dbg("Allocate a request for the next status");
+  if ((dev->next_status_urb = usb_alloc_urb(0, GFP_KERNEL)) != NULL) {
+    void *buf;
+    dbg("Allocate a buffer for the status transfer");
+    buf = usb_buffer_alloc(dev->udev,
+			   READ_BUF_SIZE,
+			   GFP_KERNEL,
+			   &dev->next_status_urb->transfer_dma);
+    if (buf != NULL) {
+      dbg("Initialize the status-read URB");
+      usb_fill_bulk_urb(dev->next_status_urb,
+			dev->udev,
+			usb_rcvbulkpipe(dev->udev,
+					dev->bulk_status_in_epaddr),
+			buf, READ_BUF_SIZE,
+			vdev_status_read_callback,
+			dev);
+      dev->next_status_urb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
+      dbg("Submit the status-read URB");
+      if ((rc = usb_submit_urb(dev->next_status_urb, GFP_KERNEL)) != 0) {
+	err("Failed submitting status-read urb, error %d", rc);
+      }
+    } else {
+      err("Unable to acllocate a buffer for the command transfer");
+      rc = -ENOMEM;
+    }
+  } else {
+    err("Unable to acllocate an URB for the status transfer");
+    rc = -ENOMEM;
+  }
+
+  if (rc != 0) {
+    if (dev->next_status_urb != NULL) {
+      free_urb(dev->next_status_urb);
+      dev->next_status_urb = NULL;
+    }
+  }
+
+  return rc;
+}
+
+/* Interface procedure for reading status data from a gadget */
+static ssize_t status_read(struct file *file, char *buffer, size_t count, loff_t *ppos)
+{
+  struct usb_vdev *dev;
+  ssize_t len;
+  int rc;
+
+  dev = (struct usb_vdev *) file->private_data;
+
+  dbg("Read status data from the gadget");
+  len = 0;
+
+  if (down_interruptible(&dev->status_read_mutex) == 0) {
+    if (dev->next_status_urb != NULL) {
+      if (dev->next_status_urb->status == 0) {
+	len = min(count,
+		  dev->next_status_urb->actual_length \
+		  - dev->next_status_offs);
+	if ((rc = copy_to_user(buffer,
+			       dev->next_status_urb->transfer_buffer \
+			       + dev->next_status_offs,
+			       len)) == 0) {
+	  dev->next_status_offs += len;
+	  if (dev->next_status_offs == \
+	      dev->next_status_urb->actual_length) {
+	    request_next_status(dev);
+	  }
+	} else {
+	  err("Unable to copy the status data to the user");
+	  len = rc;
+	}
+      } else {
+	err("Status-read error (%d)", dev->next_status_urb->status);
+	len = -EFAULT;
+      }
+    } else {
+      err("Expected the next status in the buffer");
+      len = -EFAULT;
+    }
+  } else {
+    err("Interrupted. Send the system restart signal");
+    len = -ERESTARTSYS;
+  }
+
+  return len;
 }
 
 /* Handles a finished bulk write request */
@@ -353,7 +449,7 @@ static void vdev_write_bulk_callback(struct urb *urb)
 			urb->transfer_buffer, urb->transfer_dma);
 	/* Send notifications */
 	up(&dev->limit_sem);
-	wake_up(&dev->cmd_wait);
+	wake_up(&dev->cons_wait);
 	atomic_dec(&dev->cmds_sent);
 }
 
@@ -871,12 +967,19 @@ static unsigned int vdev_poll(struct file *filp,
   dev = (struct usb_vdev *)filp->private_data;
 
   rc = 0;
+  if (down_trylock(&dev->status_read_mutex) == 0) {
+    if (dev->next_status_urb != NULL) {
+      /* Indicate that the next status data is ready */
+      rc |= (POLLIN | POLLRDNORM);
+    }
+    up(&dev->status_read_mutex);
+  }
   if (atomic_read(&dev->cmds_sent) < maxwrites) {
     /* Indicate that the write limit isn't exceeded */
     rc |= (POLLOUT | POLLWRNORM);
   } else {
     /* Add the command wait-queue to the poll table */
-    poll_wait(filp, &dev->cmd_wait, wait);
+    poll_wait(filp, &dev->cons_wait, wait);
   }
 
   return rc;
@@ -980,8 +1083,9 @@ static int vdev_probe(struct usb_interface *interface, const struct usb_device_i
 	}
 	kref_init(&dev->kref);
 	sema_init(&dev->limit_sem, maxwrites);
+	sema_init(&dev->status_read_mutex, 1);
 	atomic_set(&dev->cmds_sent, 0);
-	init_waitqueue_head(&dev->cmd_wait);
+	init_waitqueue_head(&dev->cons_wait);
 
 	dev->udev = usb_get_dev(interface_to_usbdev(interface));
 	dev->interface = interface;
