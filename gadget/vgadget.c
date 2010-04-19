@@ -72,7 +72,6 @@ static struct {
         char            *vendor_name;
         char            *product_name;
 	char		*serial;
-        char            *filename;
         unsigned int    maxwrites;
         unsigned int    config;
 } mod_data = {					// Default values
