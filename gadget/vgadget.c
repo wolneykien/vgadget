@@ -1648,17 +1648,19 @@ static int request_next_cmd(struct vg_dev *vg)
 {
   int rc;
 
-  vg->next_cmd_req = NULL;
+  if (vg->next_cmd_req != NULL) {
+    usb_ep_dequeue(vg->bulk_out, vg->next_cmd_req);
+    free_request(vg->bulk_out, vg->next_cmd_req);
+    vg->next_cmd_req = NULL;
+  }
   vg->next_cmd_offs = 0;
 
   rc = 0;
   DBG(vg, "Allocate a request for the next command\n");
-  if (vg->next_cmd_req == NULL) {
-    if ((rc = allocate_request(vg->bulk_out,
-			       CONS_BUFSIZE,
-			       &vg->next_cmd_req)) != 0) {
-      ERROR(vg, "Unable to allocate a read-command request/buffer\n");
-    }
+  if ((rc = allocate_request(vg->bulk_out,
+			     CONS_BUFSIZE,
+			     &vg->next_cmd_req)) != 0) {
+    ERROR(vg, "Unable to allocate a read-command request/buffer\n");
   }
 
   if (rc == 0) {
@@ -1807,7 +1809,7 @@ static int cons_open (struct inode *inode, struct file *filp)
 }
 
 /* Closes the console device */
-static int cons_release (struct inode *inode, struct file *filp)
+static int cons_release(struct inode *inode, struct file *filp)
 {
   int rc;
   struct vg_dev *vg;
@@ -1818,6 +1820,7 @@ static int cons_release (struct inode *inode, struct file *filp)
   if (vg != NULL) {
     DBG(vg, "Release the console device\n");
     if (vg->next_cmd_req != NULL) {
+      usb_ep_dequeue(vg->bulk_out, vg->next_cmd_req);
       free_request(vg->bulk_out, vg->next_cmd_req);
     }
   } else {
