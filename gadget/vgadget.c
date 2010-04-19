@@ -78,6 +78,7 @@ static struct {
 	.vendor		= DRIVER_VENDOR_ID,
 	.product	= DRIVER_PRODUCT_ID,
 	.maxwrites      = 16,
+	.config         = 0 // Host-configured
 };
 
 /* Bulk-only class specific requests */
@@ -99,6 +100,9 @@ static struct {
 /* Command-status endpoint buffer size */
 #define CONS_BUFSIZE PAGE_SIZE
 
+/* Number of device configurations */
+#define NUMBER_OF_CONFIGS       2
+
 /* The gadget USB device descriptor */
 static struct usb_device_descriptor
 device_desc = {
@@ -116,7 +120,7 @@ device_desc = {
 	.iManufacturer =	STRING_MANUFACTURER,
 	.iProduct =		STRING_PRODUCT,
 	.iSerialNumber =	STRING_SERIAL,
-	.bNumConfigurations =	2,
+	.bNumConfigurations =	NUMBER_OF_CONFIGS,
 };
 
 /* The gadget USB configuration descriptor */
@@ -295,7 +299,7 @@ dev_qualifier = {
 	.bcdUSB =		__constant_cpu_to_le16(0x0200),
 	.bDeviceClass =		USB_CLASS_PER_INTERFACE,
 
-	.bNumConfigurations =	2,
+	.bNumConfigurations =	NUMBER_OF_CONFIGS,
 };
 
 /* The addresses of the following endpoints are set from the corresponding
@@ -956,6 +960,11 @@ static __init int vg_bind(struct usb_gadget *gadget)
 	  device_desc.idVendor = cpu_to_le16(mod_data.vendor);
 	  device_desc.idProduct = cpu_to_le16(mod_data.product);
 	  device_desc.bcdDevice = cpu_to_le16(mod_data.release);
+	  if (mod_data.config > 0) {
+	    device_desc.bNumConfigurations = 1;
+	  }
+	  dev_qualifier.bNumConfigurations =
+	    device_desc.bNumConfigurations;
 	}
 
 #ifdef CONFIG_USB_GADGET_DUALSPEED
@@ -1099,6 +1108,12 @@ static int populate_config_buf(struct usb_gadget *gadget,
 	const struct usb_descriptor_header **function;
 	struct usb_config_descriptor *conf_desc;
 
+	if (mod_data.config > 0) {
+	  VDBG(vg, "Select the configuration #%d from the module "
+	       "parameter\n", mod_data.config);
+	  index = mod_data.config - 1;
+	}
+
 	if (index > device_desc.bNumConfigurations) {
 	  ERROR(vg, "Configuration number out of rage (%d)\n", index);
 	  return -EINVAL;
@@ -1223,8 +1238,14 @@ static int standard_setup_req(struct vg_dev *vg,
 		if (ctrl->bRequestType != (USB_DIR_OUT | USB_TYPE_STANDARD |
 				USB_RECIP_DEVICE))
 			break;
-		if (wValue <= device_desc.bNumConfigurations) {
+		if ((mod_data.config > 0 && wValue == mod_data.config) \
+		    || wValue <= device_desc.bNumConfigurations) {
 		  value = vg_request_reconf(vg, wValue);
+		} else {
+		  ERROR(vg, "Configuration value %d is out "
+			"of range (%d)\n",
+			wValue,
+			device_desc.bNumConfigurations);
 		}
 		break;
 	case USB_REQ_GET_CONFIGURATION:
