@@ -1639,9 +1639,8 @@ static ssize_t status_write (struct file *filp,
       struct usb_request *req;
       int rc;
 
-      rc = 0;
       len = min_t(size_t, count, CONS_BUFSIZE);
-      if ((rc == allocate_request(vg->bulk_status_in,
+      if ((rc = allocate_request(vg->bulk_status_in,
 				   len,
 				   &req)) == 0) {
 	DBG(vg, "Copy %d b from the user buffer %p to the status "
