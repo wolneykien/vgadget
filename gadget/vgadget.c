@@ -295,7 +295,7 @@ dev_qualifier = {
 	.bcdUSB =		__constant_cpu_to_le16(0x0200),
 	.bDeviceClass =		USB_CLASS_PER_INTERFACE,
 
-	.bNumConfigurations =	1,
+	.bNumConfigurations =	2,
 };
 
 /* The addresses of the following endpoints are set from the corresponding
